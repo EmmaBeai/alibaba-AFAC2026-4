@@ -1,0 +1,2 @@
+{"qid":"demo_q_001","domain":"financial_reports","split":"A","question":"根据示例公司 2025 年年度报告，下列关于研发投入的描述哪个正确？","options":{"A":"研发投入占营业收入比例为 10%","B":"研发投入占营业收入比例为 1%","C":"公司没有披露研发投入","D":"研发投入为负数"},"answer_format":"mcq","type":"财务指标核验","doc_ids":["demo_report_2025"]}
+

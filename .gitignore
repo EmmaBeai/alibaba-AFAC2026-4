@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+.env
+config.json
+
+# Competition data and generated artifacts
+public_dataset_upload/
+比赛详情.pdf
+data/*.jsonl
+data/raw/
+processed_data/
+logs/
+submission/
+outputs/
