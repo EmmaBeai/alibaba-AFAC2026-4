@@ -1,6 +1,7 @@
 import pytest
 
 from preprocess import pdf_parser
+from script import pdf_parse_three
 
 
 def _write_md(parsed_dir, model, doc_id, text):
@@ -24,6 +25,12 @@ def test_parse_falls_through_when_preferred_missing(tmp_path):
     assert text == "paddle only"
 
 
+def test_parse_falls_through_to_pypdf(tmp_path):
+    _write_md(tmp_path, "pypdf", "csrc_0009_att1", "pypdf only")
+    text = pdf_parser.parse("data/raw/csrc_0009_att1.pdf", parsed_dir=tmp_path)
+    assert text == "pypdf only"
+
+
 def test_parse_skips_empty_output(tmp_path):
     _write_md(tmp_path, "mineru2.5-pro", "9", "   \n  ")  # empty after strip
     _write_md(tmp_path, "paddleocr-vl-1.6", "9", "real content")
@@ -34,7 +41,10 @@ def test_parse_skips_empty_output(tmp_path):
 def test_parse_honors_explicit_model(tmp_path):
     _write_md(tmp_path, "mineru2.5-pro", "1", "mineru")
     _write_md(tmp_path, "paddleocr-vl-1.6", "1", "paddle")
-    assert pdf_parser.parse("1.pdf", model="paddleocr-vl-1.6", parsed_dir=tmp_path) == "paddle"
+    assert (
+        pdf_parser.parse("1.pdf", model="paddleocr-vl-1.6", parsed_dir=tmp_path)
+        == "paddle"
+    )
 
 
 def test_parse_raises_when_nothing_available(tmp_path):
@@ -45,7 +55,10 @@ def test_parse_raises_when_nothing_available(tmp_path):
 def test_available_models_lists_non_empty_in_order(tmp_path):
     _write_md(tmp_path, "mineru2.5-pro", "1", "a")
     _write_md(tmp_path, "paddleocr-vl-1.6", "1", "b")
-    assert pdf_parser.available_models("1.pdf", parsed_dir=tmp_path) == ["mineru2.5-pro", "paddleocr-vl-1.6"]
+    assert pdf_parser.available_models("1.pdf", parsed_dir=tmp_path) == [
+        "mineru2.5-pro",
+        "paddleocr-vl-1.6",
+    ]
 
 
 def test_extract_title_from_first_heading(tmp_path):
@@ -55,3 +68,37 @@ def test_extract_title_from_first_heading(tmp_path):
 
 def test_extract_title_none_when_no_markdown(tmp_path):
     assert pdf_parser.extract_title("nope.pdf", parsed_dir=tmp_path) is None
+
+
+def test_normalize_pypdf_text_repairs_vertical_cjk():
+    raw = "\n".join(
+        [
+            "上",
+            "市",
+            "公",
+            "司",
+            "信",
+            "息",
+            "披",
+            "露",
+            "管",
+            "理",
+            "办",
+            "法",
+            "第",
+            "一",
+            "条",
+            "为",
+            "了",
+            "规",
+            "范",
+            "信",
+            "息",
+            "披",
+            "露",
+            "。",
+        ]
+    )
+    text = pdf_parse_three.normalize_pypdf_text(raw)
+    assert "上市公司信息披露管理办法" in text
+    assert "第一条为了规范信息披露。" in text
