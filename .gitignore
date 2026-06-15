@@ -1,0 +1,39 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# IDE and OS
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Competition source documents (keep question JSON files tracked)
+Dataset/raw/
+
+# Generated indexes, logs, answers, and evidence
+logs/*
+!logs/.gitkeep
+processed_data/*
+!processed_data/.gitkeep
+answer*.csv
+evidence.json
+evidence*.json
+
+# Temporary files
+*.tmp
+*.bak
+~$*

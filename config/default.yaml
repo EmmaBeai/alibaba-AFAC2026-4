@@ -1,0 +1,23 @@
+paths:
+  dataset: Dataset
+  processed: processed_data
+  logs: logs
+
+model:
+  name: qwen3.7-plus
+  api_key_env: DASHSCOPE_API_KEY
+  base_url_env: QWEN_BASE_URL
+  default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  temperature: 0
+
+page_index:
+  leaf_pages: 6
+  branch_factor: 8
+  max_selected_nodes: 6
+  max_evidence_chars: 45000
+
+run:
+  questions: Dataset/questions/group_a
+  output_csv: answer.csv
+  evidence_json: evidence.json
+  strict_qwen: true
