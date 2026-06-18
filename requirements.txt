@@ -1,4 +1,6 @@
 openai>=1.0.0
 pypdf>=4.0.0
 beautifulsoup4>=4.12.0
+glmocr>=0.1.5
+PySocks>=1.7.1
 

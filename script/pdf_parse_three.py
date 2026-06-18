@@ -17,11 +17,13 @@ from typing import Iterable
 
 
 MODELS = (
+    "glm-ocr",
     "pypdf",
     "paddleocr-vl-1.6",
     "mineru2.5-pro",
 )
 
+GLM_OCR_MODEL = "glm-ocr"
 PYPDF_MODEL = "pypdf"
 PADDLE_MODEL = "paddleocr-vl-1.6"
 MINERU_MODEL_ID = "opendatalab/MinerU2.5-Pro-2604-1.2B"
@@ -77,6 +79,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--keep-page-images", action="store_true")
     parser.add_argument("--mineru-image-analysis", action="store_true")
     parser.add_argument(
+        "--glmocr-config",
+        type=Path,
+        default=None,
+        help="Optional GLM-OCR SDK config.yaml for MaaS or self-hosted mode.",
+    )
+    parser.add_argument(
+        "--glmocr-layout-device",
+        default=None,
+        help="Optional layout device passed to `glmocr parse`, e.g. cpu or cuda:1.",
+    )
+    parser.add_argument(
+        "--glmocr-env-file",
+        type=Path,
+        default=None,
+        help="Optional .env file loaded by `glmocr parse`, usually for ZHIPU_API_KEY.",
+    )
+    parser.add_argument(
+        "--glmocr-mode",
+        choices=("maas", "selfhosted"),
+        default=None,
+        help="Optional GLM-OCR mode passed to `glmocr parse`.",
+    )
+    parser.add_argument(
+        "--glmocr-set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Repeatable dotted config override passed through to `glmocr parse --set`. "
+            "Use KEY=VALUE; the wrapper expands it to `--set KEY VALUE`."
+        ),
+    )
+    parser.add_argument(
         "--pdf-timeout-seconds",
         type=int,
         default=DEFAULT_PDF_TIMEOUT_SECONDS,
@@ -120,6 +155,16 @@ def run_parent(args: argparse.Namespace) -> None:
             cmd.append("--keep-page-images")
         if args.mineru_image_analysis:
             cmd.append("--mineru-image-analysis")
+        if args.glmocr_config is not None:
+            cmd.extend(["--glmocr-config", str(args.glmocr_config)])
+        if args.glmocr_layout_device:
+            cmd.extend(["--glmocr-layout-device", args.glmocr_layout_device])
+        if args.glmocr_env_file is not None:
+            cmd.extend(["--glmocr-env-file", str(args.glmocr_env_file)])
+        if args.glmocr_mode:
+            cmd.extend(["--glmocr-mode", args.glmocr_mode])
+        for setting in args.glmocr_set:
+            cmd.extend(["--glmocr-set", setting])
 
         print(f"\n=== Running {model_name} ===", flush=True)
         subprocess.run(cmd, check=True)
@@ -129,9 +174,13 @@ def python_for_model(model_name: str) -> str:
     """Allow separate virtualenvs while keeping one parent command.
 
     Optional env vars:
+      GLMOCR_PYTHON=/path/to/glmocr-env/bin/python
       PADDLE_PYTHON=/path/to/paddle-env/bin/python
       TORCH_PYTHON=/path/to/torch-env/bin/python
     """
+    if model_name == GLM_OCR_MODEL:
+        return os.environ.get("GLMOCR_PYTHON", sys.executable)
+
     if model_name == "paddleocr-vl-1.6":
         return os.environ.get("PADDLE_PYTHON", sys.executable)
 
@@ -252,6 +301,16 @@ def run_model_child_with_pdf_timeouts(
             cmd.append("--keep-page-images")
         if args.mineru_image_analysis:
             cmd.append("--mineru-image-analysis")
+        if args.glmocr_config is not None:
+            cmd.extend(["--glmocr-config", str(args.glmocr_config)])
+        if args.glmocr_layout_device:
+            cmd.extend(["--glmocr-layout-device", args.glmocr_layout_device])
+        if args.glmocr_env_file is not None:
+            cmd.extend(["--glmocr-env-file", str(args.glmocr_env_file)])
+        if args.glmocr_mode:
+            cmd.extend(["--glmocr-mode", args.glmocr_mode])
+        for setting in args.glmocr_set:
+            cmd.extend(["--glmocr-set", setting])
 
         started = time.time()
         try:
@@ -399,6 +458,9 @@ def discover_pdfs(inputs: Iterable[Path]) -> list[Path]:
 
 
 def build_runner(model_name: str, args: argparse.Namespace):
+    if model_name == GLM_OCR_MODEL:
+        return GlmOcrRunner(args)
+
     if model_name == "pypdf":
         return PyPDFRunner(args)
 
@@ -694,6 +756,130 @@ class MinerU25ProRunner:
         clear_runtime_caches()
 
 
+class GlmOcrRunner:
+    """GLM-OCR SDK/CLI PDF -> Markdown runner.
+
+    GLM-OCR can run against Zhipu MaaS, a self-hosted SDK server, or local
+    vLLM/SGLang depending on its config.yaml. This runner only orchestrates the
+    offline conversion and normalizes the SDK output into this repo's standard
+    ``ParseResult`` contract.
+    """
+
+    def __init__(self, args: argparse.Namespace):
+        self.args = args
+
+    def parse_pdf(self, pdf_path: Path, raw_dir: Path) -> ParseResult:
+        page_paths = render_pdf_pages(
+            pdf_path=pdf_path,
+            cache_root=self.args.out_root / "_page_cache" / GLM_OCR_MODEL,
+            dpi=self.args.dpi,
+            overwrite=self.args.overwrite,
+        )
+
+        output_dir = raw_dir / "glmocr_output"
+        if self.args.overwrite and output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        cmd = self._build_command(input_path=page_paths[0].parent, output_dir=output_dir)
+        (raw_dir / "command.json").write_text(
+            json.dumps(cmd, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        try:
+            completed = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.CalledProcessError as exc:
+            (raw_dir / "stdout.txt").write_text(exc.stdout or "", encoding="utf-8")
+            (raw_dir / "stderr.txt").write_text(exc.stderr or "", encoding="utf-8")
+            raise
+        finally:
+            if not self.args.keep_page_images:
+                cleanup_page_cache(
+                    pdf_path,
+                    self.args.out_root / "_page_cache" / GLM_OCR_MODEL,
+                )
+
+        (raw_dir / "stdout.txt").write_text(completed.stdout or "", encoding="utf-8")
+        (raw_dir / "stderr.txt").write_text(completed.stderr or "", encoding="utf-8")
+
+        md_files = [
+            path
+            for path in output_dir.rglob("*.md")
+            if path.is_file() and path.read_text(encoding="utf-8").strip()
+        ]
+        if md_files:
+            markdown = combine_markdown_files(md_files)
+            source = "markdown_files"
+        else:
+            json_files = [path for path in output_dir.rglob("*.json") if path.is_file()]
+            markdown = combine_markdown_from_json_files(json_files)
+            source = "json_fields"
+
+        markdown = normalize_markdown(markdown)
+        if not markdown:
+            raise RuntimeError(
+                f"GLM-OCR produced no markdown under {output_dir}; "
+                "check stdout.txt/stderr.txt and SDK config."
+            )
+
+        return ParseResult(
+            markdown=markdown,
+            meta={
+                "backend": "glmocr-cli",
+                "model_id": "zai-org/GLM-OCR",
+                "pages": len(page_paths),
+                "dpi": self.args.dpi,
+                "output_dir": str(output_dir),
+                "markdown_source": source,
+                "config": str(self.args.glmocr_config)
+                if self.args.glmocr_config is not None
+                else None,
+                "layout_device": self.args.glmocr_layout_device,
+                "env_file": str(self.args.glmocr_env_file)
+                if self.args.glmocr_env_file is not None
+                else None,
+                "mode": self.args.glmocr_mode,
+                "set_overrides": list(self.args.glmocr_set),
+            },
+        )
+
+    def _build_command(self, input_path: Path, output_dir: Path) -> list[str]:
+        executable = shutil.which("glmocr")
+        if executable:
+            cmd = [executable]
+        else:
+            cmd = [sys.executable, "-m", "glmocr"]
+
+        cmd.extend(["parse", str(input_path), "--output", str(output_dir)])
+
+        if self.args.glmocr_config is not None:
+            cmd.extend(["--config", str(self.args.glmocr_config)])
+        if self.args.glmocr_layout_device:
+            cmd.extend(["--layout-device", self.args.glmocr_layout_device])
+        if self.args.glmocr_env_file is not None:
+            cmd.extend(["--env-file", str(self.args.glmocr_env_file)])
+        if self.args.glmocr_mode:
+            cmd.extend(["--mode", self.args.glmocr_mode])
+        for setting in self.args.glmocr_set:
+            key, sep, value = setting.partition("=")
+            if not sep or not key or not value:
+                raise ValueError(f"--glmocr-set expects KEY=VALUE, got {setting!r}")
+            cmd.extend(["--set", key, value])
+
+        return cmd
+
+    def unload(self) -> None:
+        clear_runtime_caches()
+
+
 def render_pdf_pages(
     pdf_path: Path,
     cache_root: Path,
@@ -822,6 +1008,45 @@ def combine_markdown_files(md_files: list[Path]) -> str:
             chunks.append(text)
 
     return "\n\n".join(chunks)
+
+
+def combine_markdown_from_json_files(json_files: list[Path]) -> str:
+    """Extract markdown-like fields from SDK JSON outputs as a fallback."""
+    chunks: list[str] = []
+
+    for json_file in sorted(json_files, key=_page_sort_key):
+        try:
+            payload = json.loads(json_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+
+        for text in iter_markdown_strings(payload):
+            text = normalize_markdown(text)
+            if text:
+                chunks.append(text)
+
+    return "\n\n".join(chunks)
+
+
+def iter_markdown_strings(value) -> Iterable[str]:
+    """Yield strings from likely markdown fields in nested JSON payloads."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_norm = str(key).lower()
+            if isinstance(child, str) and key_norm in {
+                "markdown",
+                "markdown_text",
+                "md",
+                "md_text",
+            }:
+                yield child
+            else:
+                yield from iter_markdown_strings(child)
+        return
+
+    if isinstance(value, list):
+        for child in value:
+            yield from iter_markdown_strings(child)
 
 
 def join_page_markdowns(page_markdowns: list[str]) -> str:

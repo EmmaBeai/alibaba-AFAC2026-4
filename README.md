@@ -63,6 +63,126 @@ FinalScore = 100 * Accuracy * (0.7 + 0.3 * TokenScore)
 
 > 解析坑(S0/解析阶段注意):监管公文 att.pdf 有**竖排版式**,pypdf 抽出来是一行一字(中文不靠空格,拼回即可);3 个引用文档是 HTML;财报扩展名是大写 `.PDF`;监管 txt 的 `doc_id` 是含全角括号〔〕的完整文件名 stem,不要清洗。
 
+## PDF 转 Markdown
+
+PDF 解析是离线预处理层,不放进正式答题阶段。当前约定是用
+`script/pdf_parse_three.py` 把每个 PDF 预先转换成 Markdown,再由
+`preprocess/pdf_parser.py` 读取已经生成的 `.md`。主 RAG 流程不直接跑 OCR,
+这样可以把 GPU/云 API 成本、解析失败和检索实验解耦。
+
+统一输出目录:
+
+```text
+processed_data/pdf_parsed/
+  glm-ocr/<doc_id>.md
+  glm-ocr/<doc_id>.meta.json
+  glm-ocr/<doc_id>.error.txt
+  mineru2.5-pro/<doc_id>.md
+  paddleocr-vl-1.6/<doc_id>.md
+  pypdf/<doc_id>.md
+  _raw/<model>/<doc_id>/...
+```
+
+默认消费顺序是:
+
+```text
+glm-ocr -> mineru2.5-pro -> paddleocr-vl-1.6 -> pypdf
+```
+
+也就是说,GLM-OCR 成功时优先使用它的 Markdown;如果某个文档失败或输出为空,
+自动回退到 MinerU/Paddle/pypdf 的结果。所有 backend 的原始输出都保留在
+`_raw/` 下面,方便之后做表格、金额、页码、阅读顺序的 bad case 对比。
+
+### GLM-OCR 接入
+
+GLM-OCR 对应官方 `zai-org/GLM-OCR` 0.9B 文档 OCR 模型,适合作为本项目 PDF
+转 Markdown 的第一优先级 backend。它可以走智谱 MaaS,也可以连接自托管的
+vLLM/SGLang/SDK server;本仓库负责先把 PDF 渲染成页面图片,再调用
+`glmocr parse` 并整理输出。
+
+快速安装:
+
+```bash
+pip install glmocr PySocks
+```
+
+如果要本地自托管完整 pipeline:
+
+```bash
+pip install "glmocr[selfhosted]"
+```
+
+单独跑 GLM-OCR:
+
+```bash
+python -m script.pdf_parse_three data/raw --models glm-ocr --overwrite
+```
+
+MaaS/API 模式需要 `ZHIPU_API_KEY`。PowerShell 示例:
+
+```powershell
+$env:ZHIPU_API_KEY="sk-xxx"
+python -m script.pdf_parse_three data/raw/1.pdf --models glm-ocr --overwrite
+```
+
+也可以把 key 放到 `.env` 文件:
+
+```text
+ZHIPU_API_KEY=sk-xxx
+```
+
+然后运行:
+
+```bash
+python -m script.pdf_parse_three data/raw/1.pdf \
+  --models glm-ocr \
+  --glmocr-env-file .env \
+  --glmocr-mode maas \
+  --overwrite
+```
+
+指定 GLM-OCR SDK 配置:
+
+```bash
+python -m script.pdf_parse_three data/raw \
+  --models glm-ocr \
+  --glmocr-config config.glmocr.yaml \
+  --overwrite
+```
+
+把 layout detection 放到 CPU,并覆盖 SDK 配置项:
+
+```bash
+python -m script.pdf_parse_three data/raw \
+  --models glm-ocr \
+  --glmocr-layout-device cpu \
+  --glmocr-set pipeline.maas.enabled=true \
+  --overwrite
+```
+
+如果 GLM-OCR 装在单独环境,可用环境变量指定解释器:
+
+```bash
+GLMOCR_PYTHON=/path/to/glmocr-env/bin/python \
+python -m script.pdf_parse_three data/raw --models glm-ocr
+```
+
+多 backend 对比:
+
+```bash
+python -m script.pdf_parse_three data/raw \
+  --models glm-ocr mineru2.5-pro paddleocr-vl-1.6 pypdf
+```
+
+常见错误:
+
+- `Missing dependencies for SOCKS support`:当前网络代理是 SOCKS,安装
+  `PySocks` 后重跑。
+- `MaaS mode requires an API key`:当前 shell 没有 `ZHIPU_API_KEY`,用环境变量
+  或 `--glmocr-env-file .env` 传入。
+- 只有空 JSON、没有 `.md`:通常表示每页 OCR 都失败了,先看
+  `processed_data/pdf_parsed/_raw/glm-ocr/<doc_id>/stderr.txt`。
+
 ## 输入契约
 
 `data/documents.jsonl` 每行一个文档:

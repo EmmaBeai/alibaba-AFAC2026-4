@@ -18,8 +18,15 @@ def test_parse_prefers_default_first_model(tmp_path):
     assert "mineru body" in text
 
 
+def test_parse_prefers_glm_ocr_when_available(tmp_path):
+    _write_md(tmp_path, "glm-ocr", "1", "glm body")
+    _write_md(tmp_path, "mineru2.5-pro", "1", "mineru body")
+    text = pdf_parser.parse("data/raw/1.pdf", parsed_dir=tmp_path)
+    assert text == "glm body"
+
+
 def test_parse_falls_through_when_preferred_missing(tmp_path):
-    # No mineru output for this doc; paddleocr-vl is next in DEFAULT_MODEL_ORDER.
+    # No GLM-OCR/MinerU output for this doc; PaddleOCR-VL is next.
     _write_md(tmp_path, "paddleocr-vl-1.6", "text01", "paddle only")
     text = pdf_parser.parse("data/raw/text01.pdf", parsed_dir=tmp_path)
     assert text == "paddle only"
