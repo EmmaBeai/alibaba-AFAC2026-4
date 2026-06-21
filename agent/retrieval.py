@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import json
-import math
-import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent.bm25_experiment import DebugCandidate, ExperimentalBM25, ParsedOption
 from agent.schemas import Document, Question
-from agent.structured import NUMBER_RE
-
-CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
-WORD_RE = re.compile(r"[A-Za-z0-9_.%-]+")
 
 
 @dataclass(slots=True)
@@ -20,19 +14,54 @@ class RetrievedUnit:
     unit: dict[str, Any]
     score: float
     option: str
+    source: str
+
+
+@dataclass(slots=True)
+class RetrievalResult:
+    evidence: str
+    items: list[RetrievedUnit]
+
+    @property
+    def pages_by_doc(self) -> dict[str, list[int]]:
+        pages: dict[str, set[int]] = defaultdict(set)
+        for item in self.items:
+            doc_id = str(item.unit.get("doc_id", ""))
+            page = int(item.unit.get("page") or 0)
+            if doc_id and page:
+                pages[doc_id].add(page)
+        return {doc_id: sorted(values) for doc_id, values in pages.items()}
 
 
 class StructuredRetriever:
+    """Formal field-aware BM25 retriever.
+
+    The old retriever used global keyword matching. This class now wraps the
+    experimental field-aware BM25 path: option parser, table-row expansion,
+    field/value rerank, and per-doc retrieval for comparison questions.
+    """
+
     def __init__(
         self,
         units_path: Path,
         *,
-        max_units: int = 18,
+        max_units: int = 24,
         per_option: int = 3,
         per_option_per_doc: int = 1,
         per_doc: int = 8,
         max_evidence_chars: int = 18000,
         min_score: float = 0.1,
+        k1: float = 1.5,
+        b: float = 0.75,
+        force_number_hits: int = 3,
+        force_entity_hits: int = 3,
+        force_rating_hits: int = 2,
+        number_bonus: float = 14.0,
+        organization_bonus: float = 18.0,
+        rating_bonus: float = 5.0,
+        context_phrase_bonus: float = 20.0,
+        noise_penalty: float = 18.0,
+        split_tables: bool = True,
     ):
         self.units_path = units_path
         self.max_units = max_units
@@ -41,71 +70,75 @@ class StructuredRetriever:
         self.per_doc = per_doc
         self.max_evidence_chars = max_evidence_chars
         self.min_score = min_score
-        self.units = _load_units(units_path) if units_path.exists() else []
-        self._tokens_by_unit = [_token_counter(unit.get("search_text") or unit.get("raw_text") or "") for unit in self.units]
-        self._idf = _idf(self._tokens_by_unit)
+        self.engine = ExperimentalBM25(units_path, split_tables=split_tables) if units_path.exists() else None
 
     @property
     def available(self) -> bool:
-        return bool(self.units)
+        return self.engine is not None and bool(self.engine.units)
 
     def retrieve(self, question: Question, documents: list[Document]) -> str:
-        if not self.units:
-            return ""
-        allowed_docs = {document.doc_id for document in documents}
-        candidates = [
-            (index, unit)
-            for index, unit in enumerate(self.units)
-            if unit.get("doc_id") in allowed_docs and unit.get("domain") == question.domain
-        ]
-        if not candidates:
-            return ""
+        return self.retrieve_result(question, documents).evidence
 
-        selected: dict[str, RetrievedUnit] = {}
-        option_queries = question.options or {"": ""}
-        for option, option_text in option_queries.items():
-            query = f"{question.question}\n选项{option}: {option_text}\n{option_text}\n{option_text}"
-            ranked = self._rank(query, candidates)
-            for item in ranked[: self.per_option]:
-                key = f"{item.option}:{item.unit['unit_id']}"
-                current = selected.get(key)
-                if current is None or item.score > current.score:
-                    selected[key] = item
-            by_doc: defaultdict[str, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
-            for candidate in candidates:
-                by_doc[candidate[1].get("doc_id", "")].append(candidate)
-            for doc_candidates in by_doc.values():
-                for item in self._rank(query, doc_candidates)[: self.per_option_per_doc]:
-                    key = f"{item.option}:{item.unit['unit_id']}"
-                    current = selected.get(key)
-                    if current is None or item.score > current.score:
-                        selected[key] = item
+    def retrieve_result(
+        self,
+        question: Question,
+        documents: list[Document],
+        *,
+        pages_by_doc: dict[str, list[int]] | None = None,
+    ) -> RetrievalResult:
+        if self.engine is None:
+            return RetrievalResult(evidence="", items=[])
 
-        for item in self._rank(question.question, candidates)[: self.per_option]:
-            key = f"{item.option}:{item.unit['unit_id']}"
-            current = selected.get(key)
-            if current is None or item.score > current.score:
-                selected[key] = item
+        option_payloads: list[tuple[ParsedOption, list[DebugCandidate], dict[str, list[DebugCandidate]]]] = []
+        selected: list[RetrievedUnit] = []
+        for option, option_text in question.options.items():
+            parsed = self.engine.parse_option(question, documents, option, option_text)
+            if parsed.compare:
+                per_doc = self.engine.rank_per_doc(
+                    question,
+                    documents,
+                    parsed,
+                    top_k=max(1, self.per_option_per_doc),
+                    pages_by_doc=pages_by_doc,
+                )
+                candidates = _flatten_per_doc(per_doc)
+            else:
+                per_doc = {}
+                candidates = self.engine.rank(
+                    question,
+                    documents,
+                    parsed,
+                    top_k=self.per_option,
+                    pages_by_doc=pages_by_doc,
+                )
+            option_payloads.append((parsed, candidates, per_doc))
+            selected.extend(
+                self._candidate_to_item(candidate, option, "per_doc" if parsed.compare else "bm25")
+                for candidate in candidates
+            )
 
-        ranked_unique = sorted(selected.values(), key=lambda item: item.score, reverse=True)
-        capped = self._cap_per_doc(ranked_unique)
-        return self._format_evidence(_sort_for_prompt(capped))
+        selected = self._cap_items(selected)
+        evidence = self._format_evidence(question, option_payloads)
+        return RetrievalResult(evidence=evidence, items=selected)
 
-    def _rank(self, query: str, candidates: list[tuple[int, dict[str, Any]]]) -> list[RetrievedUnit]:
-        query_tokens = _token_counter(query)
-        query_numbers = set(_numbers(query))
-        ranked: list[RetrievedUnit] = []
-        for index, unit in candidates:
-            score = _score(query_tokens, query_numbers, self._tokens_by_unit[index], unit, self._idf)
-            if score >= self.min_score:
-                ranked.append(RetrievedUnit(unit=unit, score=score, option=_option_from_query(query)))
-        return sorted(ranked, key=lambda item: item.score, reverse=True)
+    def _candidate_to_item(self, candidate: DebugCandidate, option: str, source: str) -> RetrievedUnit:
+        assert self.engine is not None
+        unit = self.engine.unit_by_id.get(candidate.unit_id)
+        if unit is None:
+            unit = {
+                "unit_id": candidate.unit_id,
+                "doc_id": candidate.doc_id,
+                "page": candidate.page,
+                "chunk_type": candidate.chunk_type,
+                "raw_text": candidate.text,
+            }
+        return RetrievedUnit(unit=unit, score=candidate.score, option=option, source=source)
 
-    def _cap_per_doc(self, items: list[RetrievedUnit]) -> list[RetrievedUnit]:
+    def _cap_items(self, items: list[RetrievedUnit]) -> list[RetrievedUnit]:
         counts: Counter[str] = Counter()
         capped: list[RetrievedUnit] = []
-        for item in items:
-            doc_id = item.unit.get("doc_id", "")
+        for item in sorted(items, key=lambda value: value.score, reverse=True):
+            doc_id = str(item.unit.get("doc_id", ""))
             if counts[doc_id] >= self.per_doc:
                 continue
             capped.append(item)
@@ -114,109 +147,68 @@ class StructuredRetriever:
                 break
         return capped
 
-    def _format_evidence(self, items: list[RetrievedUnit]) -> str:
+    def _format_evidence(
+        self,
+        question: Question,
+        option_payloads: list[tuple[ParsedOption, list[DebugCandidate], dict[str, list[DebugCandidate]]]],
+    ) -> str:
         blocks: list[str] = []
         remaining = self.max_evidence_chars
-        for item in items:
-            unit = item.unit
-            numbers = "、".join(unit.get("numbers") or [])
-            keywords = "、".join(unit.get("keywords") or [])
+        for parsed, candidates, per_doc in option_payloads:
+            option_header = (
+                f"\n### 选项 {parsed.option}\n"
+                f"选项文本：{parsed.text}\n"
+                f"解析：doc_ids={parsed.doc_ids}; fields={parsed.fields}; "
+                f"values={parsed.values}; compare={parsed.compare}\n"
+            )
+            if len(option_header) > remaining:
+                break
+            blocks.append(option_header)
+            remaining -= len(option_header)
+            if per_doc:
+                for doc_id, doc_candidates in per_doc.items():
+                    doc_header = f"\n#### 文档 {doc_id} 候选证据\n"
+                    if len(doc_header) > remaining:
+                        return "".join(blocks)
+                    blocks.append(doc_header)
+                    remaining -= len(doc_header)
+                    remaining = self._append_candidates(blocks, remaining, parsed.option, doc_candidates)
+                    if remaining <= 0:
+                        return "".join(blocks)
+            else:
+                remaining = self._append_candidates(blocks, remaining, parsed.option, candidates)
+                if remaining <= 0:
+                    return "".join(blocks)
+        return "".join(blocks)
+
+    def _append_candidates(
+        self,
+        blocks: list[str],
+        remaining: int,
+        option: str,
+        candidates: list[DebugCandidate],
+    ) -> int:
+        for candidate in candidates:
             block = (
-                f"\n[unit_id={unit.get('unit_id')}; doc_id={unit.get('doc_id')}; "
-                f"page={unit.get('page')}; type={unit.get('chunk_type')}; "
-                f"option={item.option}; score={item.score:.2f}]\n"
-                f"标题：{unit.get('title', '')}\n"
-                f"章节：{unit.get('section_path', '')}\n"
-                f"条款：{unit.get('clause_no', '')}\n"
-                f"关键词：{keywords}\n"
-                f"数字：{numbers}\n"
-                f"文本：{unit.get('raw_text', '')}\n"
+                f"\n[unit_id={candidate.unit_id}; doc_id={candidate.doc_id}; "
+                f"page={candidate.page}; type={candidate.chunk_type}; option={option}; "
+                f"score={candidate.score:.2f}; bm25={candidate.bm25:.2f}]\n"
+                f"字段命中：{'、'.join(candidate.field_hits)}\n"
+                f"值命中：{'、'.join(candidate.value_hits)}\n"
+                f"召回原因：{'; '.join(candidate.reasons)}\n"
+                f"文本：{candidate.text}\n"
             )
             if len(block) > remaining:
                 if remaining > 500:
                     blocks.append(block[:remaining] + "\n[truncated]\n")
-                break
+                return 0
             blocks.append(block)
             remaining -= len(block)
-        return "".join(blocks)
+        return remaining
 
 
-def _load_units(path: Path) -> list[dict[str, Any]]:
-    units: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                units.append(json.loads(line))
-    return units
-
-
-def _token_counter(text: str) -> Counter[str]:
-    normalized = text.lower()
-    tokens: list[str] = []
-    for match in CJK_RE.finditer(normalized):
-        value = match.group(0)
-        if len(value) == 1:
-            tokens.append(value)
-        else:
-            tokens.extend(value[index : index + 2] for index in range(len(value) - 1))
-            if len(value) >= 4:
-                tokens.extend(value[index : index + 3] for index in range(len(value) - 2))
-    tokens.extend(match.group(0) for match in WORD_RE.finditer(normalized))
-    return Counter(token for token in tokens if len(token.strip()) >= 1)
-
-
-def _idf(counters: list[Counter[str]]) -> dict[str, float]:
-    doc_freq: Counter[str] = Counter()
-    for counter in counters:
-        doc_freq.update(counter.keys())
-    total = max(1, len(counters))
-    return {token: math.log((total + 1) / (freq + 1)) + 1 for token, freq in doc_freq.items()}
-
-
-def _score(
-    query_tokens: Counter[str],
-    query_numbers: set[str],
-    unit_tokens: Counter[str],
-    unit: dict[str, Any],
-    idf: dict[str, float],
-) -> float:
-    if not query_tokens:
-        return 0.0
-    score = 0.0
-    for token, weight in query_tokens.items():
-        if token in unit_tokens:
-            score += min(weight, unit_tokens[token]) * idf.get(token, 1.0)
-    raw_text = unit.get("raw_text") or ""
-    unit_numbers = set(unit.get("numbers") or [])
-    number_hits = query_numbers & unit_numbers
-    if number_hits:
-        score += 8.0 * len(number_hits)
-    elif any(number and number in raw_text for number in query_numbers):
-        score += 4.0
-    keyword_hits = sum(1 for keyword in unit.get("keywords") or [] if keyword in raw_text)
-    score += keyword_hits * 0.2
-    length_penalty = 1.0 + len(raw_text) / 2600
-    return score / length_penalty
-
-
-def _numbers(text: str) -> list[str]:
-    return [match.group(0).strip() for match in NUMBER_RE.finditer(text) if match.group(0).strip()]
-
-
-def _sort_for_prompt(items: list[RetrievedUnit]) -> list[RetrievedUnit]:
-    return sorted(
-        items,
-        key=lambda item: (
-            item.option == "-",
-            item.option,
-            str(item.unit.get("doc_id", "")),
-            int(item.unit.get("page") or 0),
-            -item.score,
-        ),
-    )
-
-
-def _option_from_query(query: str) -> str:
-    match = re.search(r"选项([A-Z])", query)
-    return match.group(1) if match else "-"
+def _flatten_per_doc(per_doc: dict[str, list[DebugCandidate]]) -> list[DebugCandidate]:
+    candidates: list[DebugCandidate] = []
+    for doc_candidates in per_doc.values():
+        candidates.extend(doc_candidates)
+    return sorted(candidates, key=lambda item: item.score, reverse=True)

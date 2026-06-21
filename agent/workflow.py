@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections import Counter, defaultdict
 
 from agent.catalog import DatasetCatalog
 from agent.llm import QwenClient
 from agent.page_index import PageIndexStore, compact_tree, flatten_nodes
 from agent.prompts import ANSWER_SYSTEM, ROUTE_SYSTEM, TREE_SYSTEM
-from agent.retrieval import StructuredRetriever
+from agent.retrieval import RetrievalResult, StructuredRetriever
 from agent.schemas import AnswerResult, Document, Question, TokenUsage
 
 
@@ -19,6 +20,11 @@ class PageIndexWorkflow:
         max_selected_nodes: int = 6,
         max_evidence_chars: int = 45000,
         structured_retriever: StructuredRetriever | None = None,
+        link_page_index_context: bool = True,
+        pageindex_first_structured: bool = True,
+        linked_page_window: int = 0,
+        linked_max_pages_per_doc: int = 4,
+        linked_max_chars: int = 12000,
     ):
         self.catalog = catalog
         self.store = store
@@ -26,6 +32,11 @@ class PageIndexWorkflow:
         self.max_selected_nodes = max_selected_nodes
         self.max_evidence_chars = max_evidence_chars
         self.structured_retriever = structured_retriever
+        self.link_page_index_context = link_page_index_context
+        self.pageindex_first_structured = pageindex_first_structured
+        self.linked_page_window = linked_page_window
+        self.linked_max_pages_per_doc = linked_max_pages_per_doc
+        self.linked_max_chars = linked_max_chars
 
     def answer(self, question: Question) -> AnswerResult:
         before = TokenUsage(self.llm.usage.prompt_tokens, self.llm.usage.completion_tokens)
@@ -78,14 +89,36 @@ class PageIndexWorkflow:
     def _retrieve_structured_evidence(self, question: Question, documents: list[Document]) -> str:
         if self.structured_retriever is None or not self.structured_retriever.available:
             return ""
-        return self.structured_retriever.retrieve(question, documents)
+        selected_pages: dict[str, list[int]] | None = None
+        if self.pageindex_first_structured:
+            selected_pages = self._select_page_candidates(question, documents)
+        result = self.structured_retriever.retrieve_result(
+            question,
+            documents,
+            pages_by_doc=selected_pages,
+        )
+        if not result.evidence:
+            if selected_pages:
+                return self._format_selected_page_context(documents, selected_pages)
+            return ""
+        if not self.link_page_index_context:
+            return result.evidence
+        page_context = (
+            self._format_selected_page_context(documents, selected_pages)
+            if selected_pages
+            else self._retrieve_linked_page_context(documents, result)
+        )
+        if not page_context:
+            return result.evidence
+        return f"{result.evidence}\n\n## PageIndex 命中页上下文\n{page_context}"
 
-    def _retrieve_page_evidence(self, question: Question, documents: list[Document]) -> str:
-        blocks: list[str] = []
-        per_doc_budget = max(6000, self.max_evidence_chars // max(1, len(documents)))
+    def _select_page_candidates(
+        self,
+        question: Question,
+        documents: list[Document],
+    ) -> dict[str, list[int]]:
+        pages_by_doc: dict[str, list[int]] = {}
         for document in documents:
-            doc_blocks: list[str] = []
-            remaining = per_doc_budget
             root = self.store.load_index(document.doc_id)
             payload = self.llm.json_completion(
                 TREE_SYSTEM,
@@ -105,9 +138,89 @@ class PageIndexWorkflow:
             ]
             if not node_ids:
                 node_ids = list(leaves)[:1]
+            pages: set[int] = set()
             for node_id in node_ids:
                 node = leaves[node_id]
-                for page in self.store.load_pages(document.doc_id, node.start_page, node.end_page):
+                pages.update(range(node.start_page, node.end_page + 1))
+            pages_by_doc[document.doc_id] = sorted(pages)
+        return pages_by_doc
+
+    def _format_selected_page_context(
+        self,
+        documents: list[Document],
+        pages_by_doc: dict[str, list[int]] | None,
+    ) -> str:
+        if not pages_by_doc:
+            return ""
+        document_by_id = {document.doc_id: document for document in documents}
+        blocks: list[str] = []
+        remaining = self.linked_max_chars
+        for doc_id, pages in pages_by_doc.items():
+            if doc_id not in document_by_id:
+                continue
+            for page_number in pages[: self.linked_max_pages_per_doc]:
+                for page in self.store.load_pages(doc_id, page_number, page_number):
+                    block = f"\n[page_context; doc_id={doc_id}; page={page.page_number}]\n{page.text}\n"
+                    if len(block) > remaining:
+                        if remaining > 500:
+                            blocks.append(block[:remaining] + "\n[truncated]\n")
+                        return "".join(blocks)
+                    blocks.append(block)
+                    remaining -= len(block)
+        return "".join(blocks)
+
+    def _retrieve_linked_page_context(
+        self,
+        documents: list[Document],
+        result: RetrievalResult,
+    ) -> str:
+        document_by_id = {document.doc_id: document for document in documents}
+        remaining = self.linked_max_chars
+        blocks: list[str] = []
+        seen_pages: set[tuple[str, int]] = set()
+        pages_by_doc = _rank_pages_by_score(result)
+        for doc_id, pages in pages_by_doc.items():
+            if doc_id not in document_by_id:
+                continue
+            try:
+                root = self.store.load_index(doc_id)
+            except FileNotFoundError:
+                continue
+            leaves = flatten_nodes(root, leaves_only=True)
+            for page_number in pages[: self.linked_max_pages_per_doc]:
+                node = _node_covering_page(leaves, page_number)
+                start_page = page_number
+                end_page = page_number
+                if node is not None:
+                    start_page = max(node.start_page, page_number - self.linked_page_window)
+                    end_page = min(node.end_page, page_number + self.linked_page_window)
+                for page in self.store.load_pages(doc_id, start_page, end_page):
+                    key = (doc_id, page.page_number)
+                    if key in seen_pages:
+                        continue
+                    seen_pages.add(key)
+                    node_label = f"{node.node_id} | {node.title}" if node is not None else "unknown"
+                    block = (
+                        f"\n[page_context; doc_id={doc_id}; page={page.page_number}; "
+                        f"linked_node={node_label}]\n{page.text}\n"
+                    )
+                    if len(block) > remaining:
+                        if remaining > 500:
+                            blocks.append(block[:remaining] + "\n[truncated]\n")
+                        return "".join(blocks)
+                    blocks.append(block)
+                    remaining -= len(block)
+        return "".join(blocks)
+
+    def _retrieve_page_evidence(self, question: Question, documents: list[Document]) -> str:
+        blocks: list[str] = []
+        per_doc_budget = max(6000, self.max_evidence_chars // max(1, len(documents)))
+        pages_by_doc = self._select_page_candidates(question, documents)
+        for document in documents:
+            doc_blocks: list[str] = []
+            remaining = per_doc_budget
+            for page_number in pages_by_doc.get(document.doc_id, []):
+                for page in self.store.load_pages(document.doc_id, page_number, page_number):
                     block = f"\n[doc_id={document.doc_id}; page={page.page_number}]\n{page.text}\n"
                     if len(block) > remaining:
                         if remaining > 500:
@@ -141,3 +254,23 @@ def _answer_prompt(question: Question, evidence: str, evidence_kind: str) -> str
         "对每个选项分别寻找支持或反驳证据；证据不足时不要猜测。\n"
         f"{evidence_kind}：\n{evidence}"
     )
+
+
+def _rank_pages_by_score(result: RetrievalResult) -> dict[str, list[int]]:
+    scores: dict[str, Counter[int]] = defaultdict(Counter)
+    for item in result.items:
+        doc_id = str(item.unit.get("doc_id", ""))
+        page = int(item.unit.get("page") or 0)
+        if doc_id and page:
+            scores[doc_id][page] += item.score
+    return {
+        doc_id: [page for page, _ in counter.most_common()]
+        for doc_id, counter in scores.items()
+    }
+
+
+def _node_covering_page(nodes, page_number: int):
+    for node in nodes:
+        if node.start_page <= page_number <= node.end_page:
+            return node
+    return None

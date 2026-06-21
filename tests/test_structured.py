@@ -86,3 +86,119 @@ def test_structured_retriever_returns_option_evidence(tmp_path) -> None:
     )
     assert "doc1_p1_001" in evidence
     assert "不超过10亿元" in evidence
+
+
+def test_structured_retriever_forces_number_and_entity_hits(tmp_path) -> None:
+    units_path = tmp_path / "units.jsonl"
+    rows = [
+        {
+            "unit_id": "doc1_p1_001",
+            "doc_id": "doc1",
+            "domain": "financial_contracts",
+            "title": "募集说明书",
+            "page": 1,
+            "section_path": "发行条款",
+            "clause_no": "",
+            "chunk_type": "issue_terms",
+            "raw_text": "发行规模为人民币10亿元。",
+            "search_text": "发行规模 人民币10亿元",
+            "numbers": ["10亿元"],
+            "keywords": ["issue_terms"],
+        },
+        {
+            "unit_id": "doc1_p2_001",
+            "doc_id": "doc1",
+            "domain": "financial_contracts",
+            "title": "募集说明书",
+            "page": 2,
+            "section_path": "中介机构",
+            "clause_no": "",
+            "chunk_type": "intermediary",
+            "raw_text": "国信证券股份有限公司担任受托管理人。",
+            "search_text": "国信证券股份有限公司 受托管理人",
+            "numbers": [],
+            "keywords": ["intermediary"],
+        },
+    ]
+    units_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows),
+        encoding="utf-8",
+    )
+    retriever = StructuredRetriever(units_path, per_option=1, max_units=6)
+    question = Question(
+        qid="fc_a_test",
+        domain="financial_contracts",
+        split="a",
+        question="下列哪些描述准确？",
+        options={"A": "发行规模为10亿元", "B": "国信证券股份有限公司为受托管理人"},
+        answer_format="multi",
+        question_type="",
+        doc_ids=["doc1"],
+    )
+    evidence = retriever.retrieve(
+        question,
+        [Document("doc1", "financial_contracts", tmp_path / "doc1.txt", "募集说明书")],
+    )
+    assert "### 选项 A" in evidence
+    assert "值命中：10亿元" in evidence
+    assert "field_value_same_unit+70" in evidence
+    assert "### 选项 B" in evidence
+    assert "值命中：国信证券股份有限公司" in evidence
+
+
+def test_structured_retriever_respects_first_second_document_references(tmp_path) -> None:
+    units_path = tmp_path / "units.jsonl"
+    rows = [
+        {
+            "unit_id": "doc1_p1_001",
+            "doc_id": "doc1",
+            "domain": "financial_contracts",
+            "title": "第一份",
+            "page": 1,
+            "section_path": "中介机构",
+            "clause_no": "",
+            "chunk_type": "intermediary",
+            "raw_text": "中信证券股份有限公司担任受托管理人。",
+            "search_text": "中信证券股份有限公司 受托管理人",
+            "numbers": [],
+            "keywords": ["intermediary"],
+        },
+        {
+            "unit_id": "doc2_p1_001",
+            "doc_id": "doc2",
+            "domain": "financial_contracts",
+            "title": "第二份",
+            "page": 1,
+            "section_path": "中介机构",
+            "clause_no": "",
+            "chunk_type": "intermediary",
+            "raw_text": "国信证券股份有限公司担任受托管理人。",
+            "search_text": "国信证券股份有限公司 受托管理人",
+            "numbers": [],
+            "keywords": ["intermediary"],
+        },
+    ]
+    units_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows),
+        encoding="utf-8",
+    )
+    retriever = StructuredRetriever(units_path, per_option=2, max_units=6)
+    question = Question(
+        qid="fc_a_test",
+        domain="financial_contracts",
+        split="a",
+        question="关于两份文档的中介机构，下列哪些描述准确？",
+        options={"D": "第二份文档明确指定国信证券股份有限公司为受托管理人"},
+        answer_format="multi",
+        question_type="",
+        doc_ids=["doc1", "doc2"],
+    )
+    evidence = retriever.retrieve(
+        question,
+        [
+            Document("doc1", "financial_contracts", tmp_path / "doc1.txt", "第一份"),
+            Document("doc2", "financial_contracts", tmp_path / "doc2.txt", "第二份"),
+        ],
+    )
+    assert "doc2_p1_001" in evidence
+    assert "doc1_p1_001" not in evidence

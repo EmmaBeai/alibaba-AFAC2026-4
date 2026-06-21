@@ -38,6 +38,17 @@ def main() -> None:
         per_doc=retrieval_config["per_doc"],
         max_evidence_chars=retrieval_config["max_evidence_chars"],
         min_score=retrieval_config["min_score"],
+        k1=retrieval_config.get("bm25_k1", 1.5),
+        b=retrieval_config.get("bm25_b", 0.75),
+        force_number_hits=retrieval_config.get("force_number_hits", 3),
+        force_entity_hits=retrieval_config.get("force_entity_hits", 3),
+        force_rating_hits=retrieval_config.get("force_rating_hits", 2),
+        number_bonus=retrieval_config.get("number_bonus", 14.0),
+        organization_bonus=retrieval_config.get("organization_bonus", 18.0),
+        rating_bonus=retrieval_config.get("rating_bonus", 5.0),
+        context_phrase_bonus=retrieval_config.get("context_phrase_bonus", 20.0),
+        noise_penalty=retrieval_config.get("noise_penalty", 18.0),
+        split_tables=retrieval_config.get("split_tables", True),
     )
     for question in questions:
         documents = (
@@ -48,14 +59,31 @@ def main() -> None:
         evidence = retriever.retrieve(question, documents)
         print(f"\n## {question.qid} {question.question}")
         print(f"doc_ids={[document.doc_id for document in documents]}")
-        for block in evidence.split("\n[unit_id="):
-            block = block.strip()
-            if not block:
+        for block in _iter_evidence_blocks(evidence):
+            if block.startswith("###"):
+                print(block)
                 continue
-            block = "[unit_id=" + block if not block.startswith("[unit_id=") else block
             header, _, body = block.partition("\n")
             print(header)
             print(body[: args.chars].replace("\n", " "))
+
+
+def _iter_evidence_blocks(evidence: str):
+    current: list[str] = []
+    for line in evidence.splitlines():
+        if line.startswith("### "):
+            if current:
+                yield "\n".join(current).strip()
+                current = []
+            yield line
+        elif line.startswith("[unit_id="):
+            if current:
+                yield "\n".join(current).strip()
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        yield "\n".join(current).strip()
 
 
 if __name__ == "__main__":

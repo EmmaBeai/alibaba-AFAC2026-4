@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agent.page_index import build_page_index, flatten_nodes
 from agent.preprocess import clean_text, extract_pages
+from agent.runner import apply_retrieval_mode, override_run_outputs
 from agent.schemas import Document, Page
 from agent.workflow import normalize_answer
 
@@ -57,3 +58,27 @@ def test_clean_markup_noise_removes_markdown_images_and_keeps_table_text() -> No
     assert "![Image" not in cleaned
     assert "标题" in cleaned
     assert "A | B" in cleaned
+
+
+def test_apply_retrieval_modes_and_output_overrides() -> None:
+    config = {
+        "structured_retrieval": {
+            "enabled": True,
+            "pageindex_first_structured": True,
+            "link_page_index_context": True,
+        },
+        "run": {"output_csv": "answer.csv", "evidence_json": "evidence.json"},
+    }
+    apply_retrieval_mode(config, "bm25")
+    assert config["structured_retrieval"]["enabled"] is True
+    assert config["structured_retrieval"]["pageindex_first_structured"] is False
+    assert config["structured_retrieval"]["link_page_index_context"] is False
+    apply_retrieval_mode(config, "pageindex")
+    assert config["structured_retrieval"]["enabled"] is False
+    override_run_outputs(
+        config,
+        output_csv="answer_bm25.csv",
+        evidence_json="evidence_bm25.json",
+    )
+    assert config["run"]["output_csv"] == "answer_bm25.csv"
+    assert config["run"]["evidence_json"] == "evidence_bm25.json"

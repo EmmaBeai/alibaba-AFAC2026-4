@@ -34,12 +34,28 @@ page_index:
 structured_retrieval:
   enabled: true
   units_path: processed_data/structured_units.jsonl
+  split_tables: true
   max_units: 24
   per_option: 3
   per_option_per_doc: 1
   per_doc: 8
   max_evidence_chars: 18000
   min_score: 0.1
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  force_number_hits: 3
+  force_entity_hits: 3
+  force_rating_hits: 2
+  number_bonus: 14.0
+  organization_bonus: 18.0
+  rating_bonus: 5.0
+  context_phrase_bonus: 20.0
+  noise_penalty: 18.0
+  link_page_index_context: true
+  pageindex_first_structured: true
+  linked_page_window: 0
+  linked_max_pages_per_doc: 4
+  linked_max_chars: 12000
 
 run:
   questions: Dataset/questions/group_a

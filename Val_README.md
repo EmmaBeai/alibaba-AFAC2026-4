@@ -1,0 +1,241 @@
+# Validation And Debug Guide
+
+本文放验证、预览、调参和小规模试跑命令。完整生成 `answer.csv` 的主流程见
+[README.md](README.md)。
+
+## 1. Dataset Check
+
+确认问题里的 `doc_ids` 都能在 `Dataset/raw` 中找到：
+
+```powershell
+python -m script.validate_dataset
+```
+
+## 2. Unit Tests
+
+运行全部单元测试：
+
+```powershell
+python -m pytest
+```
+
+当前测试覆盖：
+
+```text
+输出 answer.csv summary
+断点续跑
+PDF Markdown 优先读取
+非法字符清理
+结构化 evidence units
+BM25 / 数字实体强召回
+第一份/第二份文档约束
+```
+
+## 3. Structured Retrieval Preview
+
+不调用 Qwen、不消耗模型 Token，只预览全库 BM25 和数字/实体召回结果：
+
+```powershell
+python -m script.preview_structured_retrieval --qid fc_a_001
+```
+
+限制每条 evidence card 展示字符数：
+
+```powershell
+python -m script.preview_structured_retrieval --qid fc_a_001 --chars 160
+```
+
+预览会按选项展示 evidence cards，并标注召回来源：
+
+```text
+字段命中：issuer / issue_size / trustee / rating_subject
+值命中：10亿元 / 国信证券股份有限公司 / AAA
+召回原因：bm25 / field / value / field_value_same_unit / chunk / noise
+```
+
+注意：正式答题默认是 `pageindex_first_structured: true`，会先用 PageIndex 选页，
+再在命中页内做 BM25 压缩；这个预览脚本不调用 Qwen，所以展示的是未经过 PageIndex
+限页的本地召回 sanity check。
+
+更细的 BM25 实验脚本：
+
+```powershell
+python -m script.preview_bm25_debug --qid fc_a_001 --top-k 5 --chars 220
+```
+
+这个脚本不会调用 Qwen，会额外展示：
+
+```text
+parsed.doc_ids       第一份/第二份文档约束
+parsed.fields        从选项抽出的核对字段，如 issuer / issue_size / trustee
+parsed.values        从选项抽出的数字、机构名、评级
+parsed.compare       是否识别为多文档/比较题
+field_hits           候选证据里命中的字段
+value_hits           候选证据里命中的值
+reasons              BM25、field、value、field+value、chunk、noise 的加减分原因
+per_doc_candidates   比较题下，每份文档各自召回的候选证据
+```
+
+它还会在内存里把表格拆成 `table_row` 候选，方便观察“表格整页召回”和“表格行召回”的差异。
+
+## 4. Small Online Run
+
+只跑前 3 道题：
+
+```powershell
+$env:DASHSCOPE_API_KEY="your_api_key"
+python -m script.run_pipeline --limit 3 --build-missing --fresh
+```
+
+只跑指定题号：
+
+```powershell
+python -m script.run_pipeline --qid fc_a_001 --build-missing --fresh
+```
+
+运行指定问题文件：
+
+```powershell
+python -m script.run_pipeline --questions Dataset/questions/group_a/insurance_questions.json --build-missing --fresh
+```
+
+`--fresh` 表示不复用已有 `answer.csv`，适合对比不同检索参数的效果。
+
+## 5. Retrieval Mode Ablation
+
+`run_pipeline` 和 `run_all` 都支持 `--retrieval-mode`：
+
+```text
+config          使用 config/default.yaml
+pageindex       纯 PageIndex
+bm25            纯 field-aware BM25 evidence cards，不调用 PageIndex 选页
+pageindex-bm25  PageIndex 先选页，field-aware BM25 在命中页内压缩
+```
+
+建议每种模式指定不同输出文件，避免覆盖：
+
+```powershell
+python -m script.run_pipeline --limit 20 --fresh --build-missing `
+  --retrieval-mode pageindex `
+  --output-csv answer_pageindex_exp.csv `
+  --evidence-json evidence_pageindex_exp.json
+
+python -m script.run_pipeline --limit 20 --fresh --build-missing `
+  --retrieval-mode bm25 `
+  --output-csv answer_bm25_exp.csv `
+  --evidence-json evidence_bm25_exp.json
+
+python -m script.run_pipeline --limit 20 --fresh --build-missing `
+  --retrieval-mode pageindex-bm25 `
+  --output-csv answer_pageindex_bm25_exp.csv `
+  --evidence-json evidence_pageindex_bm25_exp.json
+```
+
+全量跑法同理：
+
+```powershell
+python -m script.run_all --fresh --retrieval-mode pageindex --output-csv answer_pageindex.csv --evidence-json evidence_pageindex.json
+python -m script.run_all --fresh --retrieval-mode bm25 --output-csv answer_bm25.csv --evidence-json evidence_bm25.json
+python -m script.run_all --fresh --retrieval-mode pageindex-bm25 --output-csv answer_pageindex_bm25.csv --evidence-json evidence_pageindex_bm25.json
+```
+
+对比两份 answer：
+
+```powershell
+python -m script.compare_answers answer_pageindex.csv answer_pageindex_bm25.csv --out answer_diff.csv
+```
+
+## 6. Structured Units Debug
+
+重新生成全部结构化证据：
+
+```powershell
+python -m script.format_structured
+```
+
+只处理某个领域：
+
+```powershell
+python -m script.format_structured --domain financial_contracts
+```
+
+只处理某个文档，输出到样例文件：
+
+```powershell
+python -m script.format_structured --doc-id text01 --out processed_data/structured_text01.jsonl
+```
+
+`structured_text01.jsonl` 这类文件只是调试样例，正式流程默认读取：
+
+```text
+processed_data/structured_units.jsonl
+```
+
+## 7. Retrieval Parameters
+
+主要参数在 [config/default.yaml](config/default.yaml)：
+
+```yaml
+structured_retrieval:
+  enabled: true
+  units_path: processed_data/structured_units.jsonl
+  split_tables: true
+  max_units: 24
+  per_option: 3
+  per_option_per_doc: 1
+  per_doc: 8
+  max_evidence_chars: 18000
+  min_score: 0.1
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  force_number_hits: 3
+  force_entity_hits: 3
+  force_rating_hits: 2
+  number_bonus: 14.0
+  organization_bonus: 18.0
+  rating_bonus: 5.0
+  context_phrase_bonus: 20.0
+  noise_penalty: 18.0
+  link_page_index_context: true
+  pageindex_first_structured: true
+  linked_page_window: 0
+  linked_max_pages_per_doc: 4
+  linked_max_chars: 12000
+```
+
+调参建议：
+
+```text
+PageIndex 选页准但证据太长 -> 降低 max_evidence_chars / linked_max_chars / max_units
+PageIndex 选页准但页内漏证据 -> 增大 per_option / per_option_per_doc
+数字题漏召回 -> 增大 force_number_hits 或 number_bonus
+机构名题漏召回 -> 增大 force_entity_hits 或 organization_bonus
+AAA/评级噪声太多 -> 降低 force_rating_hits 或 rating_bonus
+声明页/签字页噪声太多 -> 增大 noise_penalty
+需要退回旧 BM25 全库召回 -> 设置 pageindex_first_structured: false
+PageIndex 上下文不足 -> 增大 linked_page_window 或 linked_max_chars
+```
+
+## 8. Output Files
+
+正式输出：
+
+```text
+answer.csv
+evidence.json
+```
+
+调试时可以对比：
+
+```text
+answer_v0.csv
+evidence_v2.json
+logs/llm_calls.jsonl
+```
+
+`answer.csv` 第一行 `summary` 是 Token 汇总：
+
+```csv
+qid,answer,prompt_tokens,completion_tokens,total_tokens
+summary,,3627557,629,3628186
+```

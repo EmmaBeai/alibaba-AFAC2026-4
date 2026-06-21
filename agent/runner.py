@@ -12,6 +12,8 @@ from agent.retrieval import StructuredRetriever
 from agent.schemas import AnswerResult, Document, Question
 from agent.workflow import PageIndexWorkflow
 
+RETRIEVAL_MODES = ("config", "pageindex", "bm25", "pageindex-bm25")
+
 
 def required_documents(
     catalog: DatasetCatalog,
@@ -24,6 +26,36 @@ def required_documents(
         else:
             doc_ids.update(doc.doc_id for doc in catalog.domain_documents(question.domain))
     return [catalog.get_document(doc_id) for doc_id in sorted(doc_ids)]
+
+
+def apply_retrieval_mode(config: dict, mode: str) -> None:
+    if mode not in RETRIEVAL_MODES:
+        raise ValueError(f"Unknown retrieval mode: {mode}")
+    structured_config = config.setdefault("structured_retrieval", {})
+    if mode == "config":
+        return
+    if mode == "pageindex":
+        structured_config["enabled"] = False
+        return
+    structured_config["enabled"] = True
+    if mode == "bm25":
+        structured_config["pageindex_first_structured"] = False
+        structured_config["link_page_index_context"] = False
+    elif mode == "pageindex-bm25":
+        structured_config["pageindex_first_structured"] = True
+        structured_config["link_page_index_context"] = True
+
+
+def override_run_outputs(
+    config: dict,
+    *,
+    output_csv: str | None = None,
+    evidence_json: str | None = None,
+) -> None:
+    if output_csv:
+        config["run"]["output_csv"] = output_csv
+    if evidence_json:
+        config["run"]["evidence_json"] = evidence_json
 
 
 def build_missing_indexes(
@@ -102,6 +134,17 @@ def create_workflow(config: dict, catalog: DatasetCatalog, store: PageIndexStore
             per_doc=structured_config.get("per_doc", 8),
             max_evidence_chars=structured_config.get("max_evidence_chars", 18000),
             min_score=structured_config.get("min_score", 0.1),
+            k1=structured_config.get("bm25_k1", 1.5),
+            b=structured_config.get("bm25_b", 0.75),
+            force_number_hits=structured_config.get("force_number_hits", 3),
+            force_entity_hits=structured_config.get("force_entity_hits", 3),
+            force_rating_hits=structured_config.get("force_rating_hits", 2),
+            number_bonus=structured_config.get("number_bonus", 14.0),
+            organization_bonus=structured_config.get("organization_bonus", 18.0),
+            rating_bonus=structured_config.get("rating_bonus", 5.0),
+            context_phrase_bonus=structured_config.get("context_phrase_bonus", 20.0),
+            noise_penalty=structured_config.get("noise_penalty", 18.0),
+            split_tables=structured_config.get("split_tables", True),
         )
     return PageIndexWorkflow(
         catalog=catalog,
@@ -110,6 +153,11 @@ def create_workflow(config: dict, catalog: DatasetCatalog, store: PageIndexStore
         max_selected_nodes=page_config["max_selected_nodes"],
         max_evidence_chars=page_config["max_evidence_chars"],
         structured_retriever=structured_retriever,
+        link_page_index_context=structured_config.get("link_page_index_context", True),
+        pageindex_first_structured=structured_config.get("pageindex_first_structured", True),
+        linked_page_window=structured_config.get("linked_page_window", 0),
+        linked_max_pages_per_doc=structured_config.get("linked_max_pages_per_doc", 4),
+        linked_max_chars=structured_config.get("linked_max_chars", 12000),
     )
 
 
