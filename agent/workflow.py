@@ -6,6 +6,7 @@ from agent.catalog import DatasetCatalog
 from agent.llm import QwenClient
 from agent.page_index import PageIndexStore, compact_tree, flatten_nodes
 from agent.prompts import ANSWER_SYSTEM, ROUTE_SYSTEM, TREE_SYSTEM
+from agent.retrieval import StructuredRetriever
 from agent.schemas import AnswerResult, Document, Question, TokenUsage
 
 
@@ -17,20 +18,26 @@ class PageIndexWorkflow:
         llm: QwenClient,
         max_selected_nodes: int = 6,
         max_evidence_chars: int = 45000,
+        structured_retriever: StructuredRetriever | None = None,
     ):
         self.catalog = catalog
         self.store = store
         self.llm = llm
         self.max_selected_nodes = max_selected_nodes
         self.max_evidence_chars = max_evidence_chars
+        self.structured_retriever = structured_retriever
 
     def answer(self, question: Question) -> AnswerResult:
         before = TokenUsage(self.llm.usage.prompt_tokens, self.llm.usage.completion_tokens)
         documents = self._resolve_documents(question)
-        evidence = self._retrieve_evidence(question, documents)
+        evidence = self._retrieve_structured_evidence(question, documents)
+        evidence_kind = "结构化证据卡"
+        if not evidence:
+            evidence = self._retrieve_page_evidence(question, documents)
+            evidence_kind = "证据页"
         payload = self.llm.json_completion(
             ANSWER_SYSTEM,
-            _answer_prompt(question, evidence),
+            _answer_prompt(question, evidence, evidence_kind),
             purpose="answer",
             qid=question.qid,
         )
@@ -68,10 +75,17 @@ class PageIndexWorkflow:
         selected = [allowed[item] for item in payload.get("doc_ids", []) if item in allowed]
         return selected or candidates[:3]
 
-    def _retrieve_evidence(self, question: Question, documents: list[Document]) -> str:
+    def _retrieve_structured_evidence(self, question: Question, documents: list[Document]) -> str:
+        if self.structured_retriever is None or not self.structured_retriever.available:
+            return ""
+        return self.structured_retriever.retrieve(question, documents)
+
+    def _retrieve_page_evidence(self, question: Question, documents: list[Document]) -> str:
         blocks: list[str] = []
-        remaining = self.max_evidence_chars
+        per_doc_budget = max(6000, self.max_evidence_chars // max(1, len(documents)))
         for document in documents:
+            doc_blocks: list[str] = []
+            remaining = per_doc_budget
             root = self.store.load_index(document.doc_id)
             payload = self.llm.json_completion(
                 TREE_SYSTEM,
@@ -96,9 +110,15 @@ class PageIndexWorkflow:
                 for page in self.store.load_pages(document.doc_id, node.start_page, node.end_page):
                     block = f"\n[doc_id={document.doc_id}; page={page.page_number}]\n{page.text}\n"
                     if len(block) > remaining:
-                        return "".join(blocks)
-                    blocks.append(block)
+                        if remaining > 500:
+                            doc_blocks.append(block[:remaining] + "\n[truncated]\n")
+                        remaining = 0
+                        break
+                    doc_blocks.append(block)
                     remaining -= len(block)
+                if remaining <= 0:
+                    break
+            blocks.extend(doc_blocks)
         return "".join(blocks)
 
 
@@ -110,11 +130,14 @@ def normalize_answer(value: str, answer_format: str, options: dict[str, str]) ->
     return "".join(sorted(set(letters)))
 
 
-def _answer_prompt(question: Question, evidence: str) -> str:
+def _answer_prompt(question: Question, evidence: str, evidence_kind: str) -> str:
     return (
         f"题号：{question.qid}\n"
         f"题型：{question.answer_format}\n"
+        f"参考文档ID：{json.dumps(question.doc_ids, ensure_ascii=False)}\n"
         f"问题：{question.question}\n"
         f"选项：{json.dumps(question.options, ensure_ascii=False)}\n"
-        f"证据页：\n{evidence}"
+        "要求：涉及多份文档时必须逐份核对，不能只基于第一份文档推断第二份文档。"
+        "对每个选项分别寻找支持或反驳证据；证据不足时不要猜测。\n"
+        f"{evidence_kind}：\n{evidence}"
     )

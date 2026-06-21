@@ -42,7 +42,12 @@ def main() -> None:
     store = PageIndexStore(resolve_path(config, config["paths"]["processed"]))
     documents = required_documents(catalog, questions)
     if args.build_missing:
-        build_missing_indexes(documents, store, config["page_index"])
+        build_missing_indexes(
+            documents,
+            store,
+            config["page_index"],
+            preprocess_config=config.get("preprocess"),
+        )
     else:
         assert_indexes_exist(documents, store)
     workflow = create_workflow(config, catalog, store)

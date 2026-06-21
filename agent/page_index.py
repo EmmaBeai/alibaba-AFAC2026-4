@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Iterable
 
+from agent.preprocess import sanitize_text
 from agent.schemas import Document, IndexNode, Page
 
 HEADING_RE = re.compile(
@@ -44,7 +45,10 @@ class PageIndexStore:
         )
         with (output_dir / "pages.jsonl").open("w", encoding="utf-8") as handle:
             for page in pages:
-                handle.write(json.dumps({"page_number": page.page_number, "text": page.text}, ensure_ascii=False))
+                handle.write(json.dumps(
+                    {"page_number": page.page_number, "text": sanitize_text(page.text)},
+                    ensure_ascii=False,
+                ))
                 handle.write("\n")
 
     def load_index(self, doc_id: str) -> IndexNode:

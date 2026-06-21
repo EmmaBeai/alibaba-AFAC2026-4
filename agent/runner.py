@@ -8,6 +8,7 @@ from agent.llm import QwenClient
 from agent.output import load_completed_results, write_outputs
 from agent.page_index import PageIndexStore, build_page_index
 from agent.preprocess import extract_pages
+from agent.retrieval import StructuredRetriever
 from agent.schemas import AnswerResult, Document, Question
 from agent.workflow import PageIndexWorkflow
 
@@ -29,8 +30,10 @@ def build_missing_indexes(
     documents: list[Document],
     store: PageIndexStore,
     page_config: dict,
+    preprocess_config: dict | None = None,
     progress: Callable[[str], None] = print,
 ) -> None:
+    preprocess_config = preprocess_config or {}
     missing: list[Document] = []
     for document in documents:
         try:
@@ -39,7 +42,13 @@ def build_missing_indexes(
             missing.append(document)
     for index, document in enumerate(missing, start=1):
         progress(f"[index {index}/{len(missing)}] {document.doc_id}")
-        pages = extract_pages(document.path)
+        pdf_parsed_dir = preprocess_config.get("pdf_parsed_dir")
+        pages = extract_pages(
+            document.path,
+            text_page_chars=preprocess_config.get("text_page_chars", 8000),
+            pdf_parsed_dir=store.root.parent / pdf_parsed_dir if pdf_parsed_dir else None,
+            pdf_model_order=preprocess_config.get("pdf_model_order"),
+        )
         root = build_page_index(
             document,
             pages,
@@ -73,15 +82,34 @@ def create_workflow(config: dict, catalog: DatasetCatalog, store: PageIndexStore
         base_url_env=model["base_url_env"],
         default_base_url=model["default_base_url"],
         temperature=model["temperature"],
+        extra_body=model.get("extra_body"),
+        max_tokens_by_purpose=model.get("max_tokens"),
         log_dir=resolve_path(config, config["paths"]["logs"]),
     )
     page_config = config["page_index"]
+    structured_config = config.get("structured_retrieval", {})
+    structured_retriever = None
+    if structured_config.get("enabled", True):
+        units_path = resolve_path(
+            config,
+            structured_config.get("units_path", "processed_data/structured_units.jsonl"),
+        )
+        structured_retriever = StructuredRetriever(
+            units_path,
+            max_units=structured_config.get("max_units", 18),
+            per_option=structured_config.get("per_option", 3),
+            per_option_per_doc=structured_config.get("per_option_per_doc", 1),
+            per_doc=structured_config.get("per_doc", 8),
+            max_evidence_chars=structured_config.get("max_evidence_chars", 18000),
+            min_score=structured_config.get("min_score", 0.1),
+        )
     return PageIndexWorkflow(
         catalog=catalog,
         store=store,
         llm=llm,
         max_selected_nodes=page_config["max_selected_nodes"],
         max_evidence_chars=page_config["max_evidence_chars"],
+        structured_retriever=structured_retriever,
     )
 
 

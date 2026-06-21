@@ -27,6 +27,8 @@ class QwenClient:
         default_base_url: str,
         log_dir: Path,
         temperature: float = 0,
+        extra_body: dict[str, Any] | None = None,
+        max_tokens_by_purpose: dict[str, int] | None = None,
     ):
         api_key = (os.getenv(api_key_env) or "").strip()
         if not api_key:
@@ -42,6 +44,8 @@ class QwenClient:
             max_retries=0,
         )
         self.temperature = temperature
+        self.extra_body = extra_body or {}
+        self.max_tokens_by_purpose = max_tokens_by_purpose or {}
         self.usage = TokenUsage()
         self.log_path = log_dir / "llm_calls.jsonl"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,20 +74,42 @@ class QwenClient:
         }
         with self.log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        return json.loads(content)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            self._log_failure(
+                qid,
+                purpose,
+                1,
+                "json_decode_error",
+                f"{exc}; content={content[:2000]}",
+            )
+            raise RuntimeError(
+                f"Qwen returned invalid or truncated JSON for qid={qid}, purpose={purpose}. "
+                "Check logs/llm_calls.jsonl. If completion_tokens hit the configured max_tokens, "
+                "increase model.max_tokens for that purpose."
+            ) from exc
 
     def _request(self, system: str, user: str, *, purpose: str, qid: str):
         attempts = 3
         for attempt in range(1, attempts + 1):
             try:
-                return self.client.chat.completions.create(
-                    model=self.model,
-                    temperature=self.temperature,
-                    response_format={"type": "json_object"},
-                    messages=[
+                request_args: dict[str, Any] = {
+                    "model": self.model,
+                    "temperature": self.temperature,
+                    "response_format": {"type": "json_object"},
+                    "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
+                }
+                max_tokens = self.max_tokens_by_purpose.get(purpose)
+                if max_tokens:
+                    request_args["max_tokens"] = max_tokens
+                if self.extra_body:
+                    request_args["extra_body"] = self.extra_body
+                return self.client.chat.completions.create(
+                    **request_args,
                 )
             except AuthenticationError as exc:
                 self._log_failure(qid, purpose, attempt, "authentication_error", str(exc))

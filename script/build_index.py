@@ -30,13 +30,20 @@ def main() -> None:
         selected = [doc for doc in selected if doc.doc_id in wanted]
 
     page_config = config["page_index"]
+    preprocess_config = config.get("preprocess", {})
     for index, document in enumerate(selected, start=1):
         output = store.root / document.domain / document.doc_id / "page_index.json"
         if output.exists() and not args.force:
             print(f"[{index}/{len(selected)}] skip {document.doc_id}")
             continue
         print(f"[{index}/{len(selected)}] extract {document.doc_id}")
-        pages = extract_pages(document.path)
+        pdf_parsed_dir = preprocess_config.get("pdf_parsed_dir")
+        pages = extract_pages(
+            document.path,
+            text_page_chars=preprocess_config.get("text_page_chars", 8000),
+            pdf_parsed_dir=resolve_path(config, pdf_parsed_dir) if pdf_parsed_dir else None,
+            pdf_model_order=preprocess_config.get("pdf_model_order"),
+        )
         root = build_page_index(
             document,
             pages,

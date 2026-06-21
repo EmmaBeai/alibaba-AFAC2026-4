@@ -3,18 +3,43 @@ paths:
   processed: processed_data
   logs: logs
 
+preprocess:
+  pdf_parsed_dir: processed_data/pdf_parsed
+  pdf_model_order:
+    - glm-ocr
+    - mineru2.5-pro
+    - paddleocr-vl-1.6
+    - pypdf
+  text_page_chars: 8000
+
 model:
-  name: qwen3.7-plus
+  name: qwen-plus
   api_key_env: DASHSCOPE_API_KEY
   base_url_env: QWEN_BASE_URL
   default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   temperature: 0
+  extra_body:
+    enable_thinking: false
+  max_tokens:
+    document_route: 256
+    page_index_select: 160
+    answer: 6144
 
 page_index:
   leaf_pages: 6
   branch_factor: 8
-  max_selected_nodes: 6
-  max_evidence_chars: 45000
+  max_selected_nodes: 4
+  max_evidence_chars: 42000
+
+structured_retrieval:
+  enabled: true
+  units_path: processed_data/structured_units.jsonl
+  max_units: 24
+  per_option: 3
+  per_option_per_doc: 1
+  per_doc: 8
+  max_evidence_chars: 18000
+  min_score: 0.1
 
 run:
   questions: Dataset/questions/group_a

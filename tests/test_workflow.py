@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agent.page_index import build_page_index, flatten_nodes
+from agent.preprocess import clean_text, extract_pages
 from agent.schemas import Document, Page
 from agent.workflow import normalize_answer
 
@@ -25,3 +26,34 @@ def test_page_index_leaf_ranges_cover_pages() -> None:
     ]
     assert covered == list(range(1, 18))
     assert root.title.startswith("doc |")
+
+
+def test_extract_pages_prefers_preconverted_pdf_markdown() -> None:
+    parsed_dir = Path("processed_data/pdf_parsed_test")
+    md_path = parsed_dir / "glm-ocr" / "sample.md"
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text("## Page 1\n第一页正文\n## Page 2\n第二页正文", encoding="utf-8")
+    try:
+        pages = extract_pages(
+            Path("sample.pdf"),
+            pdf_parsed_dir=parsed_dir,
+            pdf_model_order=["glm-ocr"],
+        )
+        assert [page.page_number for page in pages] == [1, 2]
+        assert pages[0].text == "第一页正文"
+    finally:
+        md_path.unlink(missing_ok=True)
+        md_path.parent.rmdir()
+        parsed_dir.rmdir()
+
+
+def test_clean_text_removes_invalid_surrogates() -> None:
+    assert clean_text("abc\udcb0\ud800def\x00") == "abcdef"
+
+
+def test_clean_markup_noise_removes_markdown_images_and_keeps_table_text() -> None:
+    text = '![Image 0](x.jpg)<div align="center">标题</div><table><tr><td>A</td><td>B</td></tr></table>'
+    cleaned = clean_text(text)
+    assert "![Image" not in cleaned
+    assert "标题" in cleaned
+    assert "A | B" in cleaned
