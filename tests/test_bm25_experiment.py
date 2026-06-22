@@ -1,6 +1,6 @@
 import json
 
-from agent.bm25_experiment import ExperimentalBM25
+from agent.bm25_experiment import ExperimentalBM25, FIELD_TERMS
 from agent.schemas import Document, Question
 
 
@@ -182,3 +182,68 @@ def test_compare_option_returns_per_doc_candidates(tmp_path) -> None:
     per_doc = bm25.rank_per_doc(question, documents, parsed, top_k=1)
     assert per_doc["doc1"][0].unit_id.startswith("doc1_p1_001")
     assert per_doc["doc2"][0].unit_id.startswith("doc2_p1_001")
+
+
+def test_soft_page_filter_keeps_stronger_non_pageindex_candidate(tmp_path) -> None:
+    units_path = tmp_path / "units.jsonl"
+    trustee_term = FIELD_TERMS["trustee"][0]
+    company = "target_company"
+    _write_units(
+        units_path,
+        [
+            {
+                "unit_id": "doc_p1_001",
+                "doc_id": "doc",
+                "domain": "financial_contracts",
+                "title": "å‹Ÿé›†è¯´æ˜Žä¹¦",
+                "page": 1,
+                "section_path": "æ¦‚è¦",
+                "clause_no": "",
+                "chunk_type": "table",
+                "raw_text": company,
+                "search_text": company,
+                "numbers": [],
+                "keywords": [],
+            },
+            {
+                "unit_id": "doc_p2_001",
+                "doc_id": "doc",
+                "domain": "financial_contracts",
+                "title": "å‹Ÿé›†è¯´æ˜Žä¹¦",
+                "page": 2,
+                "section_path": "å—æ‰˜ç®¡ç†äºº",
+                "clause_no": "",
+                "chunk_type": "table",
+                "raw_text": f"{trustee_term} | {company}",
+                "search_text": f"{trustee_term} {company}",
+                "numbers": [],
+                "keywords": ["intermediary"],
+            },
+        ],
+    )
+    bm25 = ExperimentalBM25(units_path)
+    question = Question(
+        qid="q",
+        domain="financial_contracts",
+        split="a",
+        question="ä¸‹åˆ—è¯´æ³•æ­£ç¡®çš„æ˜¯ï¼Ÿ",
+        options={"A": f"{company} ä¸º {trustee_term}"},
+        answer_format="multi",
+        question_type="",
+        doc_ids=["doc"],
+    )
+    documents = [Document("doc", "financial_contracts", tmp_path / "doc.txt", "doc")]
+    parsed = bm25.parse_option(question, documents, "A", question.options["A"])
+
+    hard = bm25.rank(question, documents, parsed, pages_by_doc={"doc": [1]}, page_filter_mode="hard")
+    soft = bm25.rank(
+        question,
+        documents,
+        parsed,
+        pages_by_doc={"doc": [1]},
+        page_filter_mode="soft",
+        page_boost=10.0,
+    )
+
+    assert hard[0].page == 1
+    assert soft[0].page == 2

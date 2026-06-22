@@ -7,7 +7,7 @@ from agent.config import resolve_path
 from agent.llm import QwenClient
 from agent.output import load_completed_results, write_outputs
 from agent.page_index import PageIndexStore, build_page_index
-from agent.preprocess import extract_pages
+from agent.preprocess import extract_pages_with_metadata
 from agent.retrieval import StructuredRetriever
 from agent.schemas import AnswerResult, Document, Question
 from agent.workflow import PageIndexWorkflow
@@ -41,9 +41,11 @@ def apply_retrieval_mode(config: dict, mode: str) -> None:
     if mode == "bm25":
         structured_config["pageindex_first_structured"] = False
         structured_config["link_page_index_context"] = False
+        structured_config["page_filter_mode"] = "off"
     elif mode == "pageindex-bm25":
         structured_config["pageindex_first_structured"] = True
-        structured_config["link_page_index_context"] = True
+        structured_config["link_page_index_context"] = False
+        structured_config["page_filter_mode"] = "soft"
 
 
 def override_run_outputs(
@@ -75,7 +77,7 @@ def build_missing_indexes(
     for index, document in enumerate(missing, start=1):
         progress(f"[index {index}/{len(missing)}] {document.doc_id}")
         pdf_parsed_dir = preprocess_config.get("pdf_parsed_dir")
-        pages = extract_pages(
+        extracted = extract_pages_with_metadata(
             document.path,
             text_page_chars=preprocess_config.get("text_page_chars", 8000),
             pdf_parsed_dir=store.root.parent / pdf_parsed_dir if pdf_parsed_dir else None,
@@ -83,11 +85,11 @@ def build_missing_indexes(
         )
         root = build_page_index(
             document,
-            pages,
+            extracted.pages,
             leaf_pages=page_config["leaf_pages"],
             branch_factor=page_config["branch_factor"],
         )
-        store.save(document, pages, root)
+        store.save(document, extracted.pages, root, extra_metadata=extracted.metadata)
 
 
 def assert_indexes_exist(documents: list[Document], store: PageIndexStore) -> None:
@@ -145,6 +147,8 @@ def create_workflow(config: dict, catalog: DatasetCatalog, store: PageIndexStore
             context_phrase_bonus=structured_config.get("context_phrase_bonus", 20.0),
             noise_penalty=structured_config.get("noise_penalty", 18.0),
             split_tables=structured_config.get("split_tables", True),
+            page_filter_mode=structured_config.get("page_filter_mode", "hard"),
+            page_boost=structured_config.get("page_boost", 10.0),
         )
     return PageIndexWorkflow(
         catalog=catalog,

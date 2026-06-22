@@ -62,6 +62,8 @@ class StructuredRetriever:
         context_phrase_bonus: float = 20.0,
         noise_penalty: float = 18.0,
         split_tables: bool = True,
+        page_filter_mode: str = "hard",
+        page_boost: float = 0.0,
     ):
         self.units_path = units_path
         self.max_units = max_units
@@ -70,6 +72,8 @@ class StructuredRetriever:
         self.per_doc = per_doc
         self.max_evidence_chars = max_evidence_chars
         self.min_score = min_score
+        self.page_filter_mode = page_filter_mode
+        self.page_boost = page_boost
         self.engine = ExperimentalBM25(units_path, split_tables=split_tables) if units_path.exists() else None
 
     @property
@@ -100,6 +104,8 @@ class StructuredRetriever:
                     parsed,
                     top_k=max(1, self.per_option_per_doc),
                     pages_by_doc=pages_by_doc,
+                    page_filter_mode=self.page_filter_mode,
+                    page_boost=self.page_boost,
                 )
                 candidates = _flatten_per_doc(per_doc)
             else:
@@ -110,6 +116,8 @@ class StructuredRetriever:
                     parsed,
                     top_k=self.per_option,
                     pages_by_doc=pages_by_doc,
+                    page_filter_mode=self.page_filter_mode,
+                    page_boost=self.page_boost,
                 )
             option_payloads.append((parsed, candidates, per_doc))
             selected.extend(

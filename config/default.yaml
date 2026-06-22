@@ -18,12 +18,14 @@ model:
   base_url_env: QWEN_BASE_URL
   default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   temperature: 0
-  extra_body:
-    enable_thinking: false
-  max_tokens:
-    document_route: 256
-    page_index_select: 160
-    answer: 6144
+  extra_body: {}          # 或先不传 enable_thinking false
+  max_tokens: {}          # 不限制 answer
+  # extra_body:
+  #   enable_thinking: false
+  # max_tokens:
+  #   document_route: 256
+  #   page_index_select: 160
+  #   answer: 6144
 
 page_index:
   leaf_pages: 6
@@ -37,7 +39,7 @@ structured_retrieval:
   split_tables: true
   max_units: 24
   per_option: 3
-  per_option_per_doc: 1
+  per_option_per_doc: 2
   per_doc: 8
   max_evidence_chars: 18000
   min_score: 0.1
@@ -53,6 +55,8 @@ structured_retrieval:
   noise_penalty: 18.0
   link_page_index_context: true
   pageindex_first_structured: true
+  page_filter_mode: soft
+  page_boost: 10.0
   linked_page_window: 0
   linked_max_pages_per_doc: 4
   linked_max_chars: 12000

@@ -6,7 +6,7 @@ import sys
 from agent.catalog import DatasetCatalog
 from agent.config import load_config, resolve_path
 from agent.page_index import PageIndexStore, build_page_index
-from agent.preprocess import extract_pages
+from agent.preprocess import extract_pages_with_metadata
 
 
 def main() -> None:
@@ -38,7 +38,7 @@ def main() -> None:
             continue
         print(f"[{index}/{len(selected)}] extract {document.doc_id}")
         pdf_parsed_dir = preprocess_config.get("pdf_parsed_dir")
-        pages = extract_pages(
+        extracted = extract_pages_with_metadata(
             document.path,
             text_page_chars=preprocess_config.get("text_page_chars", 8000),
             pdf_parsed_dir=resolve_path(config, pdf_parsed_dir) if pdf_parsed_dir else None,
@@ -46,11 +46,11 @@ def main() -> None:
         )
         root = build_page_index(
             document,
-            pages,
+            extracted.pages,
             leaf_pages=page_config["leaf_pages"],
             branch_factor=page_config["branch_factor"],
         )
-        store.save(document, pages, root)
+        store.save(document, extracted.pages, root, extra_metadata=extracted.metadata)
     print(f"Built indexes for {len(selected)} document(s).")
 
 

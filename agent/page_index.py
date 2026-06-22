@@ -27,7 +27,13 @@ class PageIndexStore:
             raise FileNotFoundError(f"No processed index for {document}")
         return matches[0]
 
-    def save(self, document: Document, pages: list[Page], root: IndexNode) -> None:
+    def save(
+        self,
+        document: Document,
+        pages: list[Page],
+        root: IndexNode,
+        extra_metadata: dict | None = None,
+    ) -> None:
         output_dir = self.document_dir(document)
         output_dir.mkdir(parents=True, exist_ok=True)
         metadata = {
@@ -37,6 +43,8 @@ class PageIndexStore:
             "source_path": str(document.path),
             "page_count": len(pages),
         }
+        if extra_metadata:
+            metadata.update(extra_metadata)
         (output_dir / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
         )

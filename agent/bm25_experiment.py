@@ -88,6 +88,21 @@ STOP_TOKENS = {
 }
 
 NOISE_MARKERS = ["声明", "签署", "备查文件", "目录", "联系方式", "查阅地点"]
+CURRENT_ISSUE_MARKERS = [
+    "本期债券发行金额",
+    "本期债券发行规模",
+    "本期发行规模",
+    "本期债券的发行规模",
+    "本期债券募集资金",
+]
+HISTORICAL_DEBT_MARKERS = [
+    "债券简称",
+    "产品简称",
+    "报告期末债券余额",
+    "债券余额",
+    "存续及偿还情况",
+    "回售日期",
+]
 
 
 @dataclass(slots=True)
@@ -161,6 +176,8 @@ class ExperimentalBM25:
         *,
         top_k: int = 8,
         pages_by_doc: dict[str, list[int]] | None = None,
+        page_filter_mode: str = "hard",
+        page_boost: float = 0.0,
     ) -> list[DebugCandidate]:
         allowed_docs = set(parsed.doc_ids)
         allowed_pages = _allowed_pages(pages_by_doc)
@@ -170,9 +187,10 @@ class ExperimentalBM25:
         for index, unit in enumerate(self.units):
             if unit.get("domain") != question.domain or unit.get("doc_id") not in allowed_docs:
                 continue
-            if not _page_allowed(unit, allowed_pages):
+            if page_filter_mode == "hard" and not _page_allowed(unit, allowed_pages):
                 continue
             candidate = self._score_unit(index, unit, query_tokens, parsed)
+            _apply_pageindex_boost(candidate, unit, allowed_pages, page_filter_mode, page_boost)
             if candidate.score > 0:
                 scored.append(candidate)
         return sorted(scored, key=lambda item: item.score, reverse=True)[:top_k]
@@ -185,6 +203,8 @@ class ExperimentalBM25:
         *,
         top_k: int = 3,
         pages_by_doc: dict[str, list[int]] | None = None,
+        page_filter_mode: str = "hard",
+        page_boost: float = 0.0,
     ) -> dict[str, list[DebugCandidate]]:
         results: dict[str, list[DebugCandidate]] = {}
         query_text = _query_text(question.question, parsed)
@@ -195,9 +215,10 @@ class ExperimentalBM25:
             for index, unit in enumerate(self.units):
                 if unit.get("domain") != question.domain or unit.get("doc_id") != doc_id:
                     continue
-                if not _page_allowed(unit, allowed_pages):
+                if page_filter_mode == "hard" and not _page_allowed(unit, allowed_pages):
                     continue
                 candidate = self._score_unit(index, unit, query_tokens, parsed)
+                _apply_pageindex_boost(candidate, unit, allowed_pages, page_filter_mode, page_boost)
                 if candidate.score > 0:
                     scored.append(candidate)
             results[doc_id] = sorted(scored, key=lambda item: item.score, reverse=True)[:top_k]
@@ -231,6 +252,10 @@ class ExperimentalBM25:
         if _chunk_type_matches_fields(chunk_type, parsed.fields):
             score += 14.0
             reasons.append(f"chunk+14:{chunk_type}")
+        issue_adjustment, issue_reasons = _issue_size_adjustment(text, parsed.fields)
+        if issue_adjustment:
+            score += issue_adjustment
+            reasons.extend(issue_reasons)
         penalty = _noise_penalty(unit)
         if penalty:
             score -= penalty
@@ -450,6 +475,19 @@ def _page_allowed(unit: dict[str, Any], allowed_pages: dict[str, set[int]]) -> b
     return int(unit.get("page") or 0) in allowed_pages.get(doc_id, set())
 
 
+def _apply_pageindex_boost(
+    candidate: DebugCandidate,
+    unit: dict[str, Any],
+    allowed_pages: dict[str, set[int]],
+    page_filter_mode: str,
+    page_boost: float,
+) -> None:
+    if page_filter_mode != "soft" or not page_boost or not _page_allowed(unit, allowed_pages):
+        return
+    candidate.score += page_boost
+    candidate.reasons.append(f"pageindex_soft+{page_boost:.0f}")
+
+
 def _noise_penalty(unit: dict[str, Any]) -> float:
     text = "\n".join(str(unit.get(field, "")) for field in ("section_path", "raw_text"))
     if not any(marker in text for marker in NOISE_MARKERS):
@@ -457,6 +495,29 @@ def _noise_penalty(unit: dict[str, Any]) -> float:
     if any(marker in text for marker in ("发行概况", "评级", "受托管理", "募集资金")):
         return 8.0
     return 22.0
+
+
+def _issue_size_adjustment(text: str, fields: list[str]) -> tuple[float, list[str]]:
+    if "issue_size" not in fields:
+        return 0.0, []
+    score = 0.0
+    reasons: list[str] = []
+    if any(marker in text for marker in CURRENT_ISSUE_MARKERS):
+        score += 80.0
+        reasons.append("current_issue_size+80")
+    elif "发行规模" in text and "本期债券" in text:
+        score += 45.0
+        reasons.append("current_issue_context+45")
+    if _numbers(text):
+        score += 20.0
+        reasons.append("issue_size_number+20")
+    else:
+        score -= 40.0
+        reasons.append("issue_size_no_number-40")
+    if any(marker in text for marker in HISTORICAL_DEBT_MARKERS):
+        score -= 75.0
+        reasons.append("historical_debt_table-75")
+    return score, reasons
 
 
 def _dedupe(values) -> list[str]:

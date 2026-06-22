@@ -45,6 +45,12 @@ class Page:
 
 
 @dataclass(slots=True)
+class ExtractedPages:
+    pages: list[Page]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class IndexNode:
     node_id: str
     title: str
@@ -86,4 +92,3 @@ class AnswerResult:
     answer: str
     evidence_retrieval: list[dict[str, Any]]
     usage: TokenUsage
-

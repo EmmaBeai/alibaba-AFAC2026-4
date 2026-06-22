@@ -54,8 +54,8 @@ python -m script.preview_structured_retrieval --qid fc_a_001 --chars 160
 ```
 
 注意：正式答题默认是 `pageindex_first_structured: true`，会先用 PageIndex 选页，
-再在命中页内做 BM25 压缩；这个预览脚本不调用 Qwen，所以展示的是未经过 PageIndex
-限页的本地召回 sanity check。
+但当前默认 `page_filter_mode: soft`，PageIndex 命中页只给 BM25 候选加小幅分数，不会硬过滤其它页。
+这个预览脚本不调用 Qwen，所以展示的是未经过 PageIndex soft boost 的本地召回 sanity check。
 
 更细的 BM25 实验脚本：
 
@@ -109,7 +109,7 @@ python -m script.run_pipeline --questions Dataset/questions/group_a/insurance_qu
 config          使用 config/default.yaml
 pageindex       纯 PageIndex
 bm25            纯 field-aware BM25 evidence cards，不调用 PageIndex 选页
-pageindex-bm25  PageIndex 先选页，field-aware BM25 在命中页内压缩
+pageindex-bm25  PageIndex 先选页作为 soft boost，field-aware BM25 仍可召回其它页
 ```
 
 建议每种模式指定不同输出文件，避免覆盖：
@@ -196,8 +196,10 @@ structured_retrieval:
   rating_bonus: 5.0
   context_phrase_bonus: 20.0
   noise_penalty: 18.0
-  link_page_index_context: true
+  link_page_index_context: false
   pageindex_first_structured: true
+  page_filter_mode: soft
+  page_boost: 10.0
   linked_page_window: 0
   linked_max_pages_per_doc: 4
   linked_max_chars: 12000
@@ -206,14 +208,16 @@ structured_retrieval:
 调参建议：
 
 ```text
-PageIndex 选页准但证据太长 -> 降低 max_evidence_chars / linked_max_chars / max_units
-PageIndex 选页准但页内漏证据 -> 增大 per_option / per_option_per_doc
+证据太长 -> 降低 max_evidence_chars / max_units
+PageIndex soft boost 太强导致偏题 -> 降低 page_boost 或设置 page_filter_mode: off
+PageIndex 选页可靠且想强约束 -> 设置 page_filter_mode: hard
+页内漏证据 -> 增大 per_option / per_option_per_doc
 数字题漏召回 -> 增大 force_number_hits 或 number_bonus
 机构名题漏召回 -> 增大 force_entity_hits 或 organization_bonus
 AAA/评级噪声太多 -> 降低 force_rating_hits 或 rating_bonus
 声明页/签字页噪声太多 -> 增大 noise_penalty
-需要退回旧 BM25 全库召回 -> 设置 pageindex_first_structured: false
-PageIndex 上下文不足 -> 增大 linked_page_window 或 linked_max_chars
+需要退回纯 BM25 全库召回 -> 设置 pageindex_first_structured: false 或 --retrieval-mode bm25
+确实需要追加 PageIndex 原页上下文 -> 设置 link_page_index_context: true，并调大 linked_max_chars
 ```
 
 ## 8. Output Files
@@ -238,4 +242,32 @@ logs/llm_calls.jsonl
 ```csv
 qid,answer,prompt_tokens,completion_tokens,total_tokens
 summary,,3627557,629,3628186
+```
+
+## 9. PDF Source Quality Check
+
+如果发现某个文档在重建 PageIndex 或 structured evidence 后准确率下降，先检查它实际使用了哪个 PDF parsed source：
+
+```powershell
+python -X utf8 -m script.inspect_text_quality --doc-id text01
+python -X utf8 -m script.inspect_text_quality --doc-id annual_byd_2024_report --terms 比亚迪 营业收入 净利润 现金流
+python -X utf8 -m script.inspect_text_quality --doc-id annual_cmb_2025_report --terms 招商银行 营业收入 净利润 资本充足率
+```
+
+重点看 `[selector]` 部分：
+
+```text
+selected_model      build_index 会使用的解析源
+split               page_markers 表示保留了 PDF 页标，char_chunks 表示只能按字数硬切
+acceptable          当前解析源是否通过质量门控
+suspicious_ratio    异常 Unicode 比例，过高通常表示 pypdf 文本层乱码
+finance_term_hits   金融关键词命中数，过低通常表示正文丢失
+```
+
+如果某个 PDF 缺少 GLM-OCR/pypdf markdown，先补跑对应解析，再重建索引：
+
+```powershell
+python -m script.pdf_parse_three Dataset/raw --models glm-ocr pypdf --glmocr-mode maas
+python -m script.build_index --force
+python -m script.format_structured
 ```

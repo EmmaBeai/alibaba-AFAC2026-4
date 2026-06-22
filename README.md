@@ -5,10 +5,11 @@
 ```text
 Dataset/raw
   -> PDF/TXT/HTML 文档解析
+  -> 自动选择 PDF parsed source
   -> PageIndex 索引
   -> structured_units 结构化证据单元
-  -> PageIndex 定位页范围
-  -> field-aware BM25 / 数字实体索引做页内证据压缩
+  -> PageIndex 选页作为软提示
+  -> field-aware BM25 / 数字实体索引召回 evidence cards
   -> Qwen 证据判断
   -> answer.csv
 ```
@@ -39,14 +40,15 @@ python -m script.validate_dataset
 
 ## 3. PDF To Markdown
 
-PDF 建议先离线转成 Markdown。正式跑分优先用 GLM-OCR：
+PDF 建议先离线转成 Markdown。正式跑分建议同时准备 GLM-OCR 和 pypdf 两种结果：
 
 ```powershell
 $env:ZHIPU_API_KEY="your_zhipu_api_key"
 python -m script.pdf_parse_three Dataset/raw --models glm-ocr --glmocr-mode maas
+python -m script.pdf_parse_three Dataset/raw --models pypdf
 ```
 
-如果只是先打通流程，可以用 `pypdf` 快速生成文本层 Markdown：
+如果只是先打通流程，可以先只跑 `pypdf`：
 
 ```powershell
 python -m script.pdf_parse_three Dataset/raw --models pypdf
@@ -58,7 +60,15 @@ python -m script.pdf_parse_three Dataset/raw --models pypdf
 processed_data/pdf_parsed/<model>/<doc_id>.md
 ```
 
-当前 PDF Markdown 读取优先级在 [config/default.yaml](config/default.yaml)：
+`build_index` 不再简单按固定优先级读取 PDF Markdown，而是会对可用 parsed source 做质量评分：
+
+```text
+pypdf 健康且接近最优 -> 优先使用 pypdf 文本层
+pypdf 乱码或异常字符过多 -> 使用 GLM-OCR / 其他 OCR source
+所有 Markdown 都缺失 -> 回退到原始 PDF 的 pypdf 抽取
+```
+
+候选模型顺序在 [config/default.yaml](config/default.yaml)：
 
 ```yaml
 preprocess:
@@ -69,6 +79,9 @@ preprocess:
     - paddleocr-vl-1.6
     - pypdf
 ```
+
+注意：这里的 `pdf_model_order` 是候选读取顺序，最终使用哪个 source 由质量选择器决定。
+选择结果会写入每个文档的 `metadata.json` 的 `pdf_source` 字段。
 
 TXT/HTML 不需要单独转 Markdown，后续 `build_index` 会直接读取并规范化。
 
@@ -88,10 +101,16 @@ processed_data/<domain>/<doc_id>/pages.jsonl
 processed_data/<domain>/<doc_id>/page_index.json
 ```
 
-如果替换了某个 PDF 的 OCR Markdown，需要强制重建对应文档：
+如果新增或替换了某个 PDF 的 Markdown，需要强制重建对应文档：
 
 ```powershell
 python -m script.build_index --doc-id text02 --force
+```
+
+如果改了 PDF source 选择逻辑，建议重建全部索引：
+
+```powershell
+python -m script.build_index --force
 ```
 
 ## 5. Format Structured Evidence Units
@@ -108,10 +127,9 @@ python -m script.format_structured
 processed_data/structured_units.jsonl
 ```
 
-正式答题时会先由 Qwen 根据 PageIndex 选择相关页，再只在这些页对应的 evidence units
-上做选项解析、表格行拆分、field/value rerank、比较题 per-doc RAG 和选项级 evidence
-cards。这样 PageIndex 负责“去哪读”，field-aware BM25 负责“页内保留什么证据”。如果
-结构化压缩没有命中，会直接使用 PageIndex 选中的原页上下文。
+正式答题时会先由 Qwen 根据 PageIndex 选择相关页，但默认不会用这些页硬过滤 BM25。
+PageIndex 命中的页只会给对应 evidence units 一个小的 soft boost；BM25 仍可从同一文档其它页召回更强证据。
+这样可以避免 PageIndex 选页失误时把正确证据提前排除。
 
 ## 6. Configure Qwen
 
@@ -131,8 +149,8 @@ $env:DASHSCOPE_API_KEY="your_api_key"
 python -m script.run_all
 ```
 
-默认使用 [config/default.yaml](config/default.yaml) 里的检索配置。也可以用
-`--retrieval-mode` 临时切换：
+默认使用 [config/default.yaml](config/default.yaml) 里的检索配置。也可以用 `--retrieval-mode`
+临时切换：
 
 ```powershell
 python -m script.run_all --retrieval-mode pageindex
@@ -140,8 +158,7 @@ python -m script.run_all --retrieval-mode bm25
 python -m script.run_all --retrieval-mode pageindex-bm25
 ```
 
-三种模式分别对应纯 PageIndex、纯 field-aware BM25、PageIndex 选页后 field-aware BM25
-页内压缩。
+三种模式分别对应纯 PageIndex、纯 field-aware BM25、PageIndex 选页 soft boost + field-aware BM25。
 
 输出格式：
 
@@ -167,7 +184,8 @@ python -m pip install -r requirements.txt
 python -m script.validate_dataset
 $env:ZHIPU_API_KEY="your_zhipu_api_key"
 python -m script.pdf_parse_three Dataset/raw --models glm-ocr --glmocr-mode maas
-python -m script.build_index
+python -m script.pdf_parse_three Dataset/raw --models pypdf
+python -m script.build_index --force
 python -m script.format_structured
 $env:DASHSCOPE_API_KEY="your_api_key"
 python -m script.run_all
