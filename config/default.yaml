@@ -1,68 +1,39 @@
 paths:
-  dataset: Dataset
+  dataset: public_dataset_upload
+  data_version: public_dataset_upload_group_a
   processed: processed_data
   logs: logs
 
-preprocess:
-  pdf_parsed_dir: processed_data/pdf_parsed
-  pdf_model_order:
-    - glm-ocr
-    - mineru2.5-pro
-    - paddleocr-vl-1.6
-    - pypdf
-  text_page_chars: 8000
+answerer:
+  type: bm25_qwen
+  # type: bm25_top1
+  # type: contextual_bm25
+  # type: hierarchical_bm25
+  # type: option_verifier
+
+structured_retrieval:
+  units_path: processed_data/chunks.jsonl
+  top_k_patches: 5
+  max_evidence_chars: 12000
+  bm25_top1_chunk_chars: 1800
+  bm25_k1: 1.5
+  bm25_b: 0.75
+
+run:
+  questions: public_dataset_upload/questions/group_a
+  output_dir: runs/01_bm25_qwen_v0
+  previous_run: runs/00_bm25_top1
 
 model:
-  name: qwen-plus
+  name: qwen3.7-max
+  prompt_version: bm25_top5_v0
   api_key_env: DASHSCOPE_API_KEY
+  api_key_env_fallbacks:
+    - QWEN_API_KEY
   base_url_env: QWEN_BASE_URL
   default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   temperature: 0
-  extra_body: {}          # 或先不传 enable_thinking false
-  max_tokens: {}          # 不限制 answer
-  # extra_body:
-  #   enable_thinking: false
-  # max_tokens:
-  #   document_route: 256
-  #   page_index_select: 160
-  #   answer: 6144
-
-page_index:
-  leaf_pages: 6
-  branch_factor: 8
-  max_selected_nodes: 4
-  max_evidence_chars: 42000
-
-structured_retrieval:
-  enabled: true
-  units_path: processed_data/structured_units.jsonl
-  split_tables: true
-  max_units: 24
-  per_option: 3
-  per_option_per_doc: 2
-  per_doc: 8
-  max_evidence_chars: 18000
-  min_score: 0.1
-  bm25_k1: 1.5
-  bm25_b: 0.75
-  force_number_hits: 3
-  force_entity_hits: 3
-  force_rating_hits: 2
-  number_bonus: 14.0
-  organization_bonus: 18.0
-  rating_bonus: 5.0
-  context_phrase_bonus: 20.0
-  noise_penalty: 18.0
-  link_page_index_context: true
-  pageindex_first_structured: true
-  page_filter_mode: soft
-  page_boost: 10.0
-  linked_page_window: 0
-  linked_max_pages_per_doc: 4
-  linked_max_chars: 12000
-
-run:
-  questions: Dataset/questions/group_a
-  output_csv: answer.csv
-  evidence_json: evidence.json
-  strict_qwen: true
+  max_tokens: 768
+  timeout_seconds: 120
+  extra_body:
+    enable_thinking: true
