@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Any
 
+from agent.bm25_qwen import BM25QwenAnswerer
+from agent.bm25_top1 import BM25Top1Answerer
 from agent.catalog import DatasetCatalog
 from agent.config import resolve_path
-from agent.llm import QwenClient
+from agent.dense_qwen import DenseQwenAnswerer
+from agent.embedding_client import DEFAULT_EMBEDDING_MODEL, DashScopeEmbeddingClient
 from agent.output import load_completed_results, write_outputs
-from agent.page_index import PageIndexStore, build_page_index
-from agent.preprocess import extract_pages_with_metadata
-from agent.retrieval import StructuredRetriever
+from agent.qwen_client import DEFAULT_QWEN_MODEL, QwenPlusClient
 from agent.schemas import AnswerResult, Document, Question
-from agent.workflow import PageIndexWorkflow
-
-RETRIEVAL_MODES = ("config", "pageindex", "bm25", "pageindex-bm25")
 
 
 def required_documents(
@@ -28,26 +26,6 @@ def required_documents(
     return [catalog.get_document(doc_id) for doc_id in sorted(doc_ids)]
 
 
-def apply_retrieval_mode(config: dict, mode: str) -> None:
-    if mode not in RETRIEVAL_MODES:
-        raise ValueError(f"Unknown retrieval mode: {mode}")
-    structured_config = config.setdefault("structured_retrieval", {})
-    if mode == "config":
-        return
-    if mode == "pageindex":
-        structured_config["enabled"] = False
-        return
-    structured_config["enabled"] = True
-    if mode == "bm25":
-        structured_config["pageindex_first_structured"] = False
-        structured_config["link_page_index_context"] = False
-        structured_config["page_filter_mode"] = "off"
-    elif mode == "pageindex-bm25":
-        structured_config["pageindex_first_structured"] = True
-        structured_config["link_page_index_context"] = False
-        structured_config["page_filter_mode"] = "soft"
-
-
 def override_run_outputs(
     config: dict,
     *,
@@ -60,115 +38,94 @@ def override_run_outputs(
         config["run"]["evidence_json"] = evidence_json
 
 
-def build_missing_indexes(
-    documents: list[Document],
-    store: PageIndexStore,
-    page_config: dict,
-    preprocess_config: dict | None = None,
-    progress: Callable[[str], None] = print,
-) -> None:
-    preprocess_config = preprocess_config or {}
-    missing: list[Document] = []
-    for document in documents:
-        try:
-            store.load_index(document.doc_id)
-        except FileNotFoundError:
-            missing.append(document)
-    for index, document in enumerate(missing, start=1):
-        progress(f"[index {index}/{len(missing)}] {document.doc_id}")
-        pdf_parsed_dir = preprocess_config.get("pdf_parsed_dir")
-        extracted = extract_pages_with_metadata(
-            document.path,
-            text_page_chars=preprocess_config.get("text_page_chars", 8000),
-            pdf_parsed_dir=store.root.parent / pdf_parsed_dir if pdf_parsed_dir else None,
-            pdf_model_order=preprocess_config.get("pdf_model_order"),
-        )
-        root = build_page_index(
-            document,
-            extracted.pages,
-            leaf_pages=page_config["leaf_pages"],
-            branch_factor=page_config["branch_factor"],
-        )
-        store.save(document, extracted.pages, root, extra_metadata=extracted.metadata)
-
-
-def assert_indexes_exist(documents: list[Document], store: PageIndexStore) -> None:
-    missing = []
-    for document in documents:
-        try:
-            store.load_index(document.doc_id)
-        except FileNotFoundError:
-            missing.append(document.doc_id)
-    if missing:
-        preview = ", ".join(missing[:10])
-        suffix = " ..." if len(missing) > 10 else ""
-        raise RuntimeError(
-            f"Missing PageIndex for {len(missing)} document(s): {preview}{suffix}. "
-            "Run python -m script.build_index first."
-        )
-
-
-def create_workflow(config: dict, catalog: DatasetCatalog, store: PageIndexStore) -> PageIndexWorkflow:
-    model = config["model"]
-    llm = QwenClient(
-        model=model["name"],
-        api_key_env=model["api_key_env"],
-        base_url_env=model["base_url_env"],
-        default_base_url=model["default_base_url"],
-        temperature=model["temperature"],
-        extra_body=model.get("extra_body"),
-        max_tokens_by_purpose=model.get("max_tokens"),
-        log_dir=resolve_path(config, config["paths"]["logs"]),
-    )
-    page_config = config["page_index"]
+def create_answerer(config: dict[str, Any], *, qwen_client: Any | None = None) -> Any:
+    answerer_type = config.get("answerer", {}).get("type", "bm25_top1")
     structured_config = config.get("structured_retrieval", {})
-    structured_retriever = None
-    if structured_config.get("enabled", True):
-        units_path = resolve_path(
-            config,
-            structured_config.get("units_path", "processed_data/structured_units.jsonl"),
-        )
-        structured_retriever = StructuredRetriever(
-            units_path,
-            max_units=structured_config.get("max_units", 18),
-            per_option=structured_config.get("per_option", 3),
-            per_option_per_doc=structured_config.get("per_option_per_doc", 1),
-            per_doc=structured_config.get("per_doc", 8),
-            max_evidence_chars=structured_config.get("max_evidence_chars", 18000),
-            min_score=structured_config.get("min_score", 0.1),
-            k1=structured_config.get("bm25_k1", 1.5),
-            b=structured_config.get("bm25_b", 0.75),
-            force_number_hits=structured_config.get("force_number_hits", 3),
-            force_entity_hits=structured_config.get("force_entity_hits", 3),
-            force_rating_hits=structured_config.get("force_rating_hits", 2),
-            number_bonus=structured_config.get("number_bonus", 14.0),
-            organization_bonus=structured_config.get("organization_bonus", 18.0),
-            rating_bonus=structured_config.get("rating_bonus", 5.0),
-            context_phrase_bonus=structured_config.get("context_phrase_bonus", 20.0),
-            noise_penalty=structured_config.get("noise_penalty", 18.0),
-            split_tables=structured_config.get("split_tables", True),
-            page_filter_mode=structured_config.get("page_filter_mode", "hard"),
-            page_boost=structured_config.get("page_boost", 10.0),
-        )
-    return PageIndexWorkflow(
-        catalog=catalog,
-        store=store,
-        llm=llm,
-        max_selected_nodes=page_config["max_selected_nodes"],
-        max_evidence_chars=page_config["max_evidence_chars"],
-        structured_retriever=structured_retriever,
-        link_page_index_context=structured_config.get("link_page_index_context", True),
-        pageindex_first_structured=structured_config.get("pageindex_first_structured", True),
-        linked_page_window=structured_config.get("linked_page_window", 0),
-        linked_max_pages_per_doc=structured_config.get("linked_max_pages_per_doc", 4),
-        linked_max_chars=structured_config.get("linked_max_chars", 12000),
+    units_path = resolve_path(
+        config,
+        structured_config.get("units_path", "processed_data/structured_units.jsonl"),
     )
+    common_kwargs = {
+        "chunk_chars": structured_config.get("bm25_top1_chunk_chars", 1800),
+        "k1": structured_config.get("bm25_k1", 1.5),
+        "b": structured_config.get("bm25_b", 0.75),
+    }
+    if answerer_type == "bm25_top1":
+        return BM25Top1Answerer(units_path, **common_kwargs)
+    if answerer_type == "dense_qwen":
+        model_config = config.get("model", {})
+        embedding_config = config.get("embedding", {})
+        embedding_client = DashScopeEmbeddingClient(
+            model=embedding_config.get("model", DEFAULT_EMBEDDING_MODEL),
+            dimension=embedding_config.get("dimension", 1024),
+            batch_size=embedding_config.get("batch_size", 10),
+            api_key_env=embedding_config.get("api_key_env", "DASHSCOPE_API_KEY"),
+            api_key_env_fallbacks=embedding_config.get("api_key_env_fallbacks"),
+            base_url_env=embedding_config.get("base_url_env", "DASHSCOPE_EMBEDDING_BASE_URL"),
+            default_base_url=embedding_config.get(
+                "default_base_url",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+            timeout_seconds=embedding_config.get("timeout_seconds", 120),
+            max_retries=embedding_config.get("max_retries", 3),
+        )
+        client = qwen_client or QwenPlusClient(
+            model=model_config.get("name", DEFAULT_QWEN_MODEL),
+            api_key_env=model_config.get("api_key_env", "DASHSCOPE_API_KEY"),
+            api_key_env_fallbacks=model_config.get("api_key_env_fallbacks"),
+            base_url_env=model_config.get("base_url_env", "QWEN_BASE_URL"),
+            default_base_url=model_config.get(
+                "default_base_url",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+            temperature=model_config.get("temperature", 0),
+            extra_body=model_config.get("extra_body"),
+            max_tokens=model_config.get("max_tokens", 768),
+            timeout_seconds=model_config.get("timeout_seconds", 120),
+        )
+        return DenseQwenAnswerer(
+            units_path,
+            embedding_cache_path=resolve_path(
+                config,
+                embedding_config.get("cache_path", "processed_data/embeddings/text_embedding_v4_dense1024.jsonl"),
+            ),
+            embedding_client=embedding_client,
+            qwen_client=client,
+            max_evidence_chars=structured_config.get("max_evidence_chars", 12000),
+            top_k_patches=structured_config.get("top_k_patches", 5),
+            build_missing_embeddings=embedding_config.get("build_missing_embeddings", False),
+        )
+    if answerer_type == "bm25_qwen":
+        model_config = config.get("model", {})
+        client = qwen_client or QwenPlusClient(
+            model=model_config.get("name", DEFAULT_QWEN_MODEL),
+            api_key_env=model_config.get("api_key_env", "DASHSCOPE_API_KEY"),
+            api_key_env_fallbacks=model_config.get("api_key_env_fallbacks"),
+            base_url_env=model_config.get("base_url_env", "QWEN_BASE_URL"),
+            default_base_url=model_config.get(
+                "default_base_url",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+            temperature=model_config.get("temperature", 0),
+            extra_body=model_config.get("extra_body"),
+            max_tokens=model_config.get("max_tokens", 768),
+            timeout_seconds=model_config.get("timeout_seconds", 120),
+        )
+        return BM25QwenAnswerer(
+            units_path,
+            qwen_client=client,
+            max_evidence_chars=structured_config.get("max_evidence_chars", 12000),
+            top_k_patches=structured_config.get("top_k_patches", 5),
+            **common_kwargs,
+        )
+    raise ValueError(f"Answerer type is not implemented: {answerer_type}")
 
 
 def answer_questions(
     config: dict,
     questions: list[Question],
-    workflow: PageIndexWorkflow,
+    documents: list[Document],
+    answerer: BM25Top1Answerer,
     *,
     checkpoint: bool = True,
     resume: bool = True,
@@ -182,7 +139,7 @@ def answer_questions(
         print(f"resume: completed={len(completed)} pending={len(pending)}")
     for index, question in enumerate(pending, start=1):
         print(f"[answer {index}/{len(pending)}] {question.qid}")
-        result = workflow.answer(question)
+        result = answerer.answer(question, _question_documents(question, documents))
         results.append(result)
         print(
             f"  answer={result.answer} "
@@ -195,3 +152,12 @@ def answer_questions(
     if not checkpoint:
         write_outputs(results, csv_path, evidence_path)
     return results
+
+
+def _question_documents(question: Question, documents: list[Document]) -> list[Document]:
+    if question.doc_ids:
+        by_id = {document.doc_id: document for document in documents}
+        selected = [by_id[doc_id] for doc_id in question.doc_ids if doc_id in by_id]
+        if selected:
+            return selected
+    return [document for document in documents if document.domain == question.domain]
