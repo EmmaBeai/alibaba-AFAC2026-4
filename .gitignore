@@ -6,9 +6,14 @@
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pyre/
+.pytype/
+.tox/
+.nox/
 .coverage
 htmlcov/
 .venv/
@@ -24,11 +29,28 @@ Thumbs.db
 # Competition source documents (keep question JSON files tracked)
 Dataset/raw/
 
+# Local dataset copies and generated parsing artifacts
+data/
+processed_data 2/
+processed_data_1/
+public_dataset_upload/
+processed_data(1).zip
+
+# Local workspaces, evaluation notes, and generated tests
+docs/
+eval/
+tests/
+
+# Local PDFs and attachments
+*.pdf
+*.PDF
+
 # Generated indexes, logs, answers, and evidence
 logs/*
 !logs/.gitkeep
 processed_data/*
 !processed_data/.gitkeep
+feishu_update/
 answer*.csv
 evidence.json
 evidence*.json
