@@ -1,0 +1,11 @@
+{
+  "model": "qwen3.7-max",
+  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "temperature": 0,
+  "max_context_chars": 8000,
+  "top_k": 4,
+  "candidate_docs": 2,
+  "data_dir": "examples/data",
+  "processed_dir": "examples/processed_data",
+  "submission_dir": "examples/submission"
+}

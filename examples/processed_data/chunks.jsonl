@@ -1,0 +1,2 @@
+{"chunk_id": "demo_report_2025::chunk_0000", "doc_id": "demo_report_2025", "domain": "financial_reports", "end": 91, "start": 0, "text": "示例公司 2025 年年度报告\n\n公司 2025 年营业收入为 100 亿元，研发投入为 10 亿元。研发投入占营业收入的比例为 10%。\n经营活动产生的现金流量净额为 12 亿元。", "title": "示例公司 2025 年年度报告"}
+{"chunk_id": "demo_insurance::chunk_0000", "doc_id": "demo_insurance", "domain": "insurance", "end": 40, "start": 0, "text": "示例保险条款\n\n被保险人身故时，身故保险金为已交保险费与现金价值二者中的较大者。", "title": "示例保险条款"}
