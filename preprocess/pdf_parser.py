@@ -1,18 +1,13 @@
-"""PDF (.pdf/.PDF) extraction — reads pre-converted markdown.
+"""PDF markdown consumption for the production preprocessing chain.
 
-Conversion happens OFFLINE on a GPU box via ``script/pdf_parse_three.py``, which
-runs document parsers (glm-ocr, mineru2.5-pro, paddleocr-vl-1.6, pypdf) and writes
-ONE markdown per (model, doc) under ``PDF_PARSED_DIR/<model>/<doc_id>.md``.
+PDF conversion is an offline step handled by ``preprocess.pdf_to_markdown``.
+That step writes one markdown file per ``(parser, doc_id)`` under:
 
-This module is the CONSUMPTION layer. We store all parses (audit + later
-cross-checking), but the pipeline consumes exactly ONE per doc so retrieval
-indexes a single version — picked by ``DEFAULT_MODEL_ORDER``, falling through to
-the next model when one's output is missing or empty (the converter records
-per-doc failures, so some docs have fewer than four outputs).
+``processed_data/pdf_parsed/<parser>/<doc_id>.md``
 
-No torch here — this only reads committed markdown, keeping the main pipeline
-light and GPU-free. Uniform contract with the other parsers: ``parse(path) -> str``,
-plus ``extract_title(path) -> str | None``.
+The current production parser set is intentionally small: ``glm-ocr`` first,
+then ``pypdf`` as the fallback text-layer parser. This module only reads those
+materialized markdown files; it does not run OCR or import GPU libraries.
 """
 
 from __future__ import annotations
@@ -20,26 +15,20 @@ from __future__ import annotations
 from pathlib import Path
 
 PDF_PARSED_DIR = Path("processed_data/pdf_parsed")
-
-# Consumption order: first non-empty markdown wins. GLM-OCR is the preferred
-# document-OCR backend; the others backstop missing/failed conversions.
-DEFAULT_MODEL_ORDER = ("glm-ocr", "mineru2.5-pro", "paddleocr-vl-1.6", "pypdf")
+DEFAULT_MODEL_ORDER = ("glm-ocr", "pypdf")
 
 
 def markdown_path(pdf_path: Path, model: str, parsed_dir: Path = PDF_PARSED_DIR) -> Path:
-    """Path to a given model's markdown for a doc (doc_id == the PDF's stem)."""
+    """Path to a model's markdown for a document."""
     return parsed_dir / model / f"{Path(pdf_path).stem}.md"
 
 
 def available_models(pdf_path: Path, parsed_dir: Path = PDF_PARSED_DIR) -> list[str]:
-    """Models that produced a non-empty markdown for this doc, in default order.
-
-    Useful for the cross-check experiments (compare numbers across parses).
-    """
+    """Models that produced non-empty markdown, in production preference order."""
     found: list[str] = []
     for model in DEFAULT_MODEL_ORDER:
         path = markdown_path(pdf_path, model, parsed_dir)
-        if path.exists() and path.read_text(encoding="utf-8").strip():
+        if path.exists() and path.read_text(encoding="utf-8", errors="replace").strip():
             found.append(model)
     return found
 
@@ -49,22 +38,18 @@ def parse(
     model: str | None = None,
     parsed_dir: Path = PDF_PARSED_DIR,
 ) -> str:
-    """Return one doc's text from its pre-converted markdown.
-
-    With ``model`` set, reads that model's markdown; otherwise walks
-    ``DEFAULT_MODEL_ORDER`` and returns the first non-empty one. Raises if nothing
-    is available (i.e. the offline conversion hasn't been run/committed) — no
-    silent fallback to degraded text.
-    """
+    """Return one PDF's selected pre-converted markdown text."""
     order = (model,) if model is not None else DEFAULT_MODEL_ORDER
     for candidate in order:
         md = markdown_path(path, candidate, parsed_dir)
-        if md.exists():
-            text = md.read_text(encoding="utf-8").strip()
-            if text:
-                return text
+        if not md.exists():
+            continue
+        text = md.read_text(encoding="utf-8", errors="replace").strip()
+        if text:
+            return text
     raise FileNotFoundError(
-        f"no non-empty markdown for {Path(path).stem!r} under {parsed_dir} (tried {list(order)})"
+        f"no non-empty markdown for {Path(path).stem!r} under {parsed_dir} "
+        f"(tried {list(order)})"
     )
 
 
@@ -73,11 +58,7 @@ def extract_title(
     model: str | None = None,
     parsed_dir: Path = PDF_PARSED_DIR,
 ) -> str | None:
-    """Harvest a title from the chosen markdown's first heading, else ``None``.
-
-    Parallels ``html_parser.extract_title`` so the orchestrator fills real PDF
-    titles the same way (falling back to ``doc_id``).
-    """
+    """Use the selected markdown's first H1 heading as a lightweight title."""
     try:
         text = parse(path, model=model, parsed_dir=parsed_dir)
     except FileNotFoundError:

@@ -1,4 +1,4 @@
-# script/pdf_parse_three.py — offline PDF→markdown converter (runs on the GPU box)
+# preprocess/pdf_to_markdown.py — production offline PDF→markdown converter.
 from __future__ import annotations
 
 import argparse
@@ -9,27 +9,18 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 
-MODELS = (
-    "glm-ocr",
-    "pypdf",
-    "paddleocr-vl-1.6",
-    "mineru2.5-pro",
-)
+MODELS = ("glm-ocr", "pypdf")
 
 GLM_OCR_MODEL = "glm-ocr"
 PYPDF_MODEL = "pypdf"
-PADDLE_MODEL = "paddleocr-vl-1.6"
-MINERU_MODEL_ID = "opendatalab/MinerU2.5-Pro-2604-1.2B"
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-CACHE_CLEAR_INTERVAL_PAGES = 32
 DEFAULT_PDF_TIMEOUT_SECONDS = 30 * 60
 
 # Must be set before torch is imported in the child process. Helps reduce CUDA
@@ -85,7 +76,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--keep-page-images", action="store_true")
-    parser.add_argument("--mineru-image-analysis", action="store_true")
     parser.add_argument(
         "--glmocr-config",
         type=Path,
@@ -161,8 +151,6 @@ def run_parent(args: argparse.Namespace) -> None:
             cmd.append("--overwrite")
         if args.keep_page_images:
             cmd.append("--keep-page-images")
-        if args.mineru_image_analysis:
-            cmd.append("--mineru-image-analysis")
         if args.glmocr_config is not None:
             cmd.extend(["--glmocr-config", str(args.glmocr_config)])
         if args.glmocr_layout_device:
@@ -181,21 +169,16 @@ def run_parent(args: argparse.Namespace) -> None:
 def python_for_model(model_name: str) -> str:
     """Allow separate virtualenvs while keeping one parent command.
 
-    Optional env vars:
+    Optional env var:
       GLMOCR_PYTHON=/path/to/glmocr-env/bin/python
-      PADDLE_PYTHON=/path/to/paddle-env/bin/python
-      TORCH_PYTHON=/path/to/torch-env/bin/python
     """
     if model_name == GLM_OCR_MODEL:
         return os.environ.get("GLMOCR_PYTHON", sys.executable)
 
-    if model_name == "paddleocr-vl-1.6":
-        return os.environ.get("PADDLE_PYTHON", sys.executable)
-
     if model_name == "pypdf":
         return sys.executable
 
-    return os.environ.get("TORCH_PYTHON", sys.executable)
+    raise ValueError(f"Unknown production model: {model_name}")
 
 
 def run_one_model_child(args: argparse.Namespace) -> None:
@@ -307,8 +290,6 @@ def run_model_child_with_pdf_timeouts(
             cmd.append("--overwrite")
         if args.keep_page_images:
             cmd.append("--keep-page-images")
-        if args.mineru_image_analysis:
-            cmd.append("--mineru-image-analysis")
         if args.glmocr_config is not None:
             cmd.extend(["--glmocr-config", str(args.glmocr_config)])
         if args.glmocr_layout_device:
@@ -472,13 +453,7 @@ def build_runner(model_name: str, args: argparse.Namespace):
     if model_name == "pypdf":
         return PyPDFRunner(args)
 
-    if model_name == "paddleocr-vl-1.6":
-        return PaddleOCRVLRunner(args)
-
-    if model_name == "mineru2.5-pro":
-        return MinerU25ProRunner(args)
-
-    raise ValueError(f"Unknown model: {model_name}")
+    raise ValueError(f"Unknown production model: {model_name}")
 
 
 def clear_runtime_caches() -> None:
@@ -504,25 +479,6 @@ def clear_runtime_caches() -> None:
                 mps.empty_cache()
         except Exception:
             pass
-
-    paddle = sys.modules.get("paddle")
-    if paddle is not None:
-        try:
-            cuda = getattr(getattr(paddle, "device", None), "cuda", None)
-            if cuda is not None and hasattr(cuda, "empty_cache"):
-                cuda.empty_cache()
-        except Exception:
-            pass
-
-
-def offload_model_to_cpu(model) -> None:
-    """Best-effort model offload before dropping references."""
-    if model is None or not hasattr(model, "to"):
-        return
-    try:
-        model.to("cpu")
-    except Exception:
-        pass
 
 
 class PyPDFRunner:
@@ -573,194 +529,6 @@ class PyPDFRunner:
         )
 
     def unload(self) -> None:
-        clear_runtime_caches()
-
-
-class PaddleOCRVLRunner:
-    """PaddleOCR-VL-1.6 PDF/image -> Markdown runner."""
-
-    def __init__(self, args: argparse.Namespace):
-        self.args = args
-        self.pipeline = None
-
-    def _ensure_loaded(self) -> None:
-        if self.pipeline is not None:
-            return
-        from paddleocr import PaddleOCRVL
-
-        self.pipeline = PaddleOCRVL(pipeline_version="v1.6")
-
-    def parse_pdf(self, pdf_path: Path, raw_dir: Path) -> ParseResult:
-        self._ensure_loaded()
-        assert self.pipeline is not None
-
-        page_inputs = materialize_paddle_page_inputs(
-            pdf_path=pdf_path,
-            cache_root=self.args.out_root / "_page_cache" / PADDLE_MODEL,
-            dpi=self.args.dpi,
-            overwrite=self.args.overwrite,
-        )
-
-        page_markdowns: list[str] = []
-        blank_pages: list[int] = []
-        result_count = 0
-
-        try:
-            for idx, page_input in enumerate(page_inputs, start=1):
-                print(f"  [paddleocr-vl-1.6] page {idx}/{len(page_inputs)}")
-
-                page_raw_dir = raw_dir / "pages" / f"page_{idx:04d}"
-                md_dir = page_raw_dir / "markdown"
-                json_dir = page_raw_dir / "json"
-                md_dir.mkdir(parents=True, exist_ok=True)
-                json_dir.mkdir(parents=True, exist_ok=True)
-
-                output = self.pipeline.predict(str(page_input))
-
-                for res in output:
-                    result_count += 1
-                    res.save_to_json(save_path=str(json_dir))
-                    res.save_to_markdown(save_path=str(md_dir))
-                del output
-                clear_runtime_caches()
-
-                md_files = list(md_dir.rglob("*.md"))
-                if not md_files:
-                    blank_pages.append(idx)
-                    continue
-
-                page_md = combine_markdown_files(md_files)
-                if page_md.strip():
-                    page_markdowns.append(page_md)
-                else:
-                    blank_pages.append(idx)
-
-                if result_count % CACHE_CLEAR_INTERVAL_PAGES == 0:
-                    clear_runtime_caches()
-
-        finally:
-            if not self.args.keep_page_images:
-                cleanup_page_cache(
-                    pdf_path,
-                    self.args.out_root / "_page_cache" / PADDLE_MODEL,
-                )
-            clear_runtime_caches()
-
-        markdown = join_page_markdowns(page_markdowns)
-        if not markdown:
-            raise RuntimeError(
-                f"PaddleOCR-VL produced no markdown for any page under {raw_dir}"
-            )
-
-        return ParseResult(
-            markdown=markdown,
-            meta={
-                "backend": "paddleocr",
-                "result_count": result_count,
-                "pages": len(page_inputs),
-                "blank_pages": blank_pages,
-                "raw_dir": str(raw_dir),
-            },
-        )
-
-    def unload(self) -> None:
-        self.pipeline = None
-        clear_runtime_caches()
-
-
-class MinerU25ProRunner:
-    """MinerU2.5-Pro page-image -> JSON -> Markdown runner."""
-
-    def __init__(self, args: argparse.Namespace):
-        self.args = args
-        self.json2md = None
-        self.model = None
-        self.processor = None
-        self.client = None
-
-    def _ensure_loaded(self) -> None:
-        if self.client is not None:
-            return
-        from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
-        from mineru_vl_utils import MinerUClient
-        from mineru_vl_utils.post_process import json2md
-
-        self.json2md = json2md
-
-        self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-            MINERU_MODEL_ID,
-            dtype="auto",
-            device_map="auto",
-        )
-        self.processor = AutoProcessor.from_pretrained(
-            MINERU_MODEL_ID,
-            use_fast=True,
-        )
-        self.client = MinerUClient(
-            backend="transformers",
-            model=self.model,
-            processor=self.processor,
-            image_analysis=self.args.mineru_image_analysis,
-        )
-
-    def parse_pdf(self, pdf_path: Path, raw_dir: Path) -> ParseResult:
-        from PIL import Image
-
-        page_paths = render_pdf_pages(
-            pdf_path=pdf_path,
-            cache_root=self.args.out_root / "_page_cache",
-            dpi=self.args.dpi,
-            overwrite=self.args.overwrite,
-        )
-
-        page_markdowns: list[str] = []
-        page_json_dir = raw_dir / "pages_json"
-        page_json_dir.mkdir(parents=True, exist_ok=True)
-
-        self._ensure_loaded()
-        assert self.client is not None
-        assert self.json2md is not None
-
-        try:
-            for idx, page_path in enumerate(page_paths, start=1):
-                print(f"  [mineru2.5-pro] page {idx}/{len(page_paths)}")
-
-                with Image.open(page_path) as image:
-                    content_list = self.client.two_step_extract(image.convert("RGB"))
-
-                (page_json_dir / f"page_{idx:04d}.json").write_text(
-                    json.dumps(content_list, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-
-                page_md = self.json2md(content_list)
-                page_markdowns.append(page_md)
-                if idx % CACHE_CLEAR_INTERVAL_PAGES == 0:
-                    clear_runtime_caches()
-
-        finally:
-            if not self.args.keep_page_images:
-                cleanup_page_cache(pdf_path, self.args.out_root / "_page_cache")
-            clear_runtime_caches()
-
-        return ParseResult(
-            markdown=join_page_markdowns(page_markdowns),
-            meta={
-                "backend": "mineru-vl-utils-transformers",
-                "model_id": MINERU_MODEL_ID,
-                "pages": len(page_paths),
-                "dpi": self.args.dpi,
-                "image_analysis": bool(self.args.mineru_image_analysis),
-                "raw_dir": str(raw_dir),
-            },
-        )
-
-    def unload(self) -> None:
-        offload_model_to_cpu(self.model)
-        self.client = None
-        self.processor = None
-        self.model = None
-        self.json2md = None
         clear_runtime_caches()
 
 
@@ -1089,66 +857,6 @@ def render_pdf_pages(
     return page_paths
 
 
-def materialize_paddle_page_inputs(
-    pdf_path: Path,
-    cache_root: Path,
-    dpi: int,
-    overwrite: bool,
-) -> list[Path]:
-    """Create page-sized inputs for PaddleOCR-VL.
-
-    Prefer page images because they avoid the whole-PDF parser path. If PyMuPDF
-    is unavailable in the Paddle environment, split to one-page PDFs so large
-    files still do not get submitted as a single document.
-    """
-    try:
-        return render_pdf_pages(
-            pdf_path=pdf_path,
-            cache_root=cache_root,
-            dpi=dpi,
-            overwrite=overwrite,
-        )
-    except ModuleNotFoundError as exc:
-        if exc.name != "fitz":
-            raise
-        return split_pdf_pages(
-            pdf_path=pdf_path,
-            cache_root=cache_root,
-            overwrite=overwrite,
-        )
-
-
-def split_pdf_pages(
-    pdf_path: Path,
-    cache_root: Path,
-    overwrite: bool,
-) -> list[Path]:
-    """Split a PDF into one-page PDFs for parser environments without PyMuPDF."""
-    from pypdf import PdfReader, PdfWriter
-
-    doc_id = pdf_path.stem
-    out_dir = cache_root / doc_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    reader = PdfReader(str(pdf_path))
-    page_paths: list[Path] = []
-
-    for page_index, page in enumerate(reader.pages):
-        page_no = page_index + 1
-        page_path = out_dir / f"page_{page_no:04d}.pdf"
-        page_paths.append(page_path)
-
-        if page_path.exists() and not overwrite:
-            continue
-
-        writer = PdfWriter()
-        writer.add_page(page)
-        with page_path.open("wb") as fh:
-            writer.write(fh)
-
-    return page_paths
-
-
 def cleanup_page_cache(pdf_path: Path, cache_root: Path) -> None:
     cache_dir = cache_root / pdf_path.stem
     if cache_dir.exists():
@@ -1156,13 +864,7 @@ def cleanup_page_cache(pdf_path: Path, cache_root: Path) -> None:
 
 
 def _page_sort_key(md_file: Path) -> list:
-    """Natural sort key so page files order numerically, not lexically.
-
-    PaddleOCR writes per-page files like ``8_0.md … 8_38.md`` with NON-padded
-    indices, so a plain ``sorted()`` gives 8_1, 8_10, 8_2, … and scrambles the
-    page order of any doc with >9 pages. Splitting on digit runs and comparing
-    the numeric chunks as ints fixes that.
-    """
+    """Natural sort key so page files order numerically, not lexically."""
     return [
         int(tok) if tok.isdigit() else tok
         for tok in re.split(r"(\d+)", md_file.stem)
