@@ -1,0 +1,2 @@
+route,model,role,note,question_count,valid_items,invalid_items,prompt_tokens,completion_tokens,total_tokens,avg_total_tokens
+qwen37,qwen3.7-max,custom,Manual CLI route.,100,100,0,8747,41050,49797,497.97

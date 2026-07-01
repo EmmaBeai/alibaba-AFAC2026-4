@@ -1,0 +1,31 @@
+03_bm25_qwen_thinking_v2 answer provenance
+
+This answer.csv was created from:
+
+  runs/03_bm25_qwen_thinking_v0/answer.csv
+
+This version only applies the financial-contract fake gold from:
+
+  eval/fake_gold/fake_gold_fc_v1.jsonl
+
+Only records with score_eligible:true were used. The low-confidence ambiguous record fc_a_015 was not applied.
+
+The insurance answers are intentionally kept exactly as they were in v0. This version does not include the insurance inline changes from 03_bm25_qwen_thinking_v1.
+
+Changed answers relative to v0:
+
+  fc_a_002: AD -> ABD
+  fc_a_004: A -> AC
+  fc_a_005: ABD -> ABCD
+  fc_a_008: D -> B
+  fc_a_009: AB -> ABD
+  fc_a_011: A -> AB
+  fc_a_012: AC -> ACD
+  fc_a_014: B -> ABC
+  fc_a_016: BC -> ABC
+  fc_a_017: AD -> ABD
+  fc_a_018: B -> A
+  fc_a_019: B -> AB
+  fc_a_020: AB -> ABD
+
+All other answer.csv rows and non-answer columns are unchanged from v0.

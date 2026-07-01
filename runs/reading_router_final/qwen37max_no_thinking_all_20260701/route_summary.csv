@@ -1,0 +1,6 @@
+route,question_count,valid_items,invalid_items,prompt_tokens,completion_tokens,total_tokens,avg_total_tokens
+numeric_delta,15,15,0,2505,1785,4290,286.00
+tf_reading,12,12,0,931,1930,2861,238.42
+multi_route_v2,63,63,0,8849,9273,18122,287.65
+mcq_route,10,10,0,1490,1944,3434,343.40
+general_reasoning,0,0,0,0,0,0,0.00

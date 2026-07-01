@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-22T07:59:17.948752+00:00",
+  "run_id": "smoke_bm25_qwen_v0",
+  "git": {
+    "commit": "bdcf6214e4beb8b69611f27000cd9536efc2d025",
+    "short_commit": "bdcf621",
+    "dirty": true,
+    "status_short": [
+      "M .env.example",
+      " M README.md",
+      " M Val_README.md",
+      " D agent/bm25_experiment.py",
+      " D agent/llm.py",
+      " D agent/page_index.py",
+      " D agent/preprocess.py",
+      " D agent/prompts.py",
+      " D agent/retrieval.py",
+      " M agent/runner.py",
+      " D agent/structured.py",
+      " D agent/workflow.py",
+      " M config/default.yaml",
+      " D preprocess/__init__.py",
+      " D preprocess/pdf_parser.py",
+      " D processed_data/.gitkeep",
+      " M requirements.txt",
+      " D script/build_index.py",
+      " D script/format_structured.py",
+      " D script/inspect_text_quality.py",
+      " D script/pdf_parse_three.py",
+      " D script/preview_bm25_debug.py",
+      " D script/preview_structured_retrieval.py",
+      " M script/run_all.py",
+      " M script/run_pipeline.py",
+      " D tests/test_bm25_experiment.py",
+      " D tests/test_preprocess_pdf_source.py",
+      " D tests/test_structured.py",
+      " D tests/test_workflow.py",
+      "?? agent/bm25_qwen.py",
+      "?? agent/bm25_top1.py",
+      "?? agent/qwen_client.py",
+      "?? agent/run_artifacts.py",
+      "?? agent/run_compare.py",
+      "?? agent/submission_validator.py",
+      "?? chunk/",
+      "?? data/",
+      "?? docs/",
+      "?? examples/",
+      "?? outputs/",
+      "?? processed_data_1/",
+      "?? public_dataset_upload/",
+      "?? runs/",
+      "?? script/compare_runs.py",
+      "?? script/validate_submission.py",
+      "?? tests/test_answerer_registry.py",
+      "?? tests/test_bm25_qwen.py",
+      "?? tests/test_bm25_top1.py",
+      "?? tests/test_chunk_documents.py",
+      "?? tests/test_config_defaults.py",
+      "?? tests/test_run_artifacts.py",
+      "?? tests/test_run_compare.py",
+      "?? tests/test_submission_validator.py",
+      "?? \"\\346\\257\\224\\350\\265\\233\\350\\257\\246\\346\\203\\205.pdf\""
+    ]
+  },
+  "data": {
+    "dataset_path": "/Users/xiaohebai/Workspace/Project Y/public_dataset_upload",
+    "questions_path": "/Users/xiaohebai/Workspace/Project Y/public_dataset_upload/questions/group_a",
+    "data_version": "public_dataset_upload_group_a",
+    "question_count": 1,
+    "document_count": 2
+  },
+  "answerer": {
+    "type": "bm25_qwen"
+  },
+  "chunk_index_config": {
+    "units_path": "processed_data/chunks.jsonl",
+    "top_k_patches": 3,
+    "max_evidence_chars": 12000,
+    "bm25_top1_chunk_chars": 1800,
+    "bm25_k1": 1.5,
+    "bm25_b": 0.75
+  },
+  "model": {
+    "name": "qwen-plus",
+    "prompt_version": "bm25_top3_v0",
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "api_key_env_fallbacks": [
+      "QWEN_API_KEY"
+    ],
+    "base_url_env": "QWEN_BASE_URL",
+    "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "temperature": 0,
+    "max_tokens": 768,
+    "timeout_seconds": 120,
+    "extra_body": {}
+  },
+  "token_usage": {
+    "prompt_tokens": 3906,
+    "completion_tokens": 222,
+    "total_tokens": 4128
+  },
+  "outputs": {
+    "answer_csv": "/Users/xiaohebai/Workspace/Project Y/runs/smoke_bm25_qwen_v0/answer.csv",
+    "evidence_json": "/Users/xiaohebai/Workspace/Project Y/runs/smoke_bm25_qwen_v0/evidence.json",
+    "config_yaml": "/Users/xiaohebai/Workspace/Project Y/runs/smoke_bm25_qwen_v0/config.yaml",
+    "manifest_json": "/Users/xiaohebai/Workspace/Project Y/runs/smoke_bm25_qwen_v0/manifest.json"
+  },
+  "changes": {
+    "previous_run": null,
+    "changed_qids": [],
+    "same_qids": [],
+    "missing_left": [],
+    "missing_right": []
+  },
+  "output_checks": {
+    "ok": true,
+    "answer": {
+      "rows": 1,
+      "expected_rows": 1,
+      "missing_qids": [],
+      "extra_qids": [],
+      "duplicate_qids": [],
+      "invalid_answers": [],
+      "missing_columns": []
+    },
+    "page": {
+      "with_page": 0
+    },
+    "block_cell": {
+      "with_block_or_cell": 0
+    },
+    "citation": {
+      "with_citation": 0,
+      "missing_evidence_qids": []
+    },
+    "token": {
+      "prompt_tokens": 3906,
+      "completion_tokens": 222,
+      "total_tokens": 4128,
+      "row_prompt_tokens": 3906,
+      "row_completion_tokens": 222,
+      "row_total_tokens": 4128
+    }
+  }
+}

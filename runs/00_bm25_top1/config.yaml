@@ -1,0 +1,21 @@
+paths:
+  dataset: public_dataset_upload
+  data_version: public_dataset_upload_group_a
+  processed: processed_data
+  logs: logs
+answerer:
+  type: bm25_top1
+structured_retrieval:
+  units_path: processed_data/chunks.jsonl
+  bm25_top1_chunk_chars: 1800
+  bm25_k1: 1.5
+  bm25_b: 0.75
+run:
+  questions: public_dataset_upload/questions/group_a
+  output_dir: /Users/xiaohebai/Workspace/Project Y/runs/00_bm25_top1
+  previous_run: null
+  output_csv: /Users/xiaohebai/Workspace/Project Y/runs/00_bm25_top1/answer.csv
+  evidence_json: /Users/xiaohebai/Workspace/Project Y/runs/00_bm25_top1/evidence.json
+model:
+  name: none
+  prompt_version: none

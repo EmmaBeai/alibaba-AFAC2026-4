@@ -1,0 +1,42 @@
+paths:
+  dataset: public_dataset_upload
+  data_version: public_dataset_upload_group_a
+  processed: processed_data
+  logs: logs
+answerer:
+  type: dense_qwen
+structured_retrieval:
+  units_path: processed_data/clean_chunks.jsonl
+  top_k_patches: 5
+  max_evidence_chars: 12000
+embedding:
+  model: text-embedding-v4
+  dimension: 1024
+  batch_size: 10
+  build_missing_embeddings: false
+  max_retries: 3
+  cache_path: processed_data/embeddings/text_embedding_v4_clean_dense1024.jsonl
+  api_key_env: DASHSCOPE_API_KEY
+  api_key_env_fallbacks:
+  - QWEN_API_KEY
+  base_url_env: DASHSCOPE_EMBEDDING_BASE_URL
+  default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  timeout_seconds: 120
+run:
+  questions: public_dataset_upload/questions/group_a
+  output_dir: /Users/xiaohebai/Workspace/Project Y/runs/02_dense_qwen_v0
+  previous_run: runs/01_bm25_qwen_v0
+  output_csv: /Users/xiaohebai/Workspace/Project Y/runs/02_dense_qwen_v0/answer.csv
+  evidence_json: /Users/xiaohebai/Workspace/Project Y/runs/02_dense_qwen_v0/evidence.json
+model:
+  name: qwen3.7-max
+  prompt_version: dense_top5_v0
+  api_key_env: DASHSCOPE_API_KEY
+  api_key_env_fallbacks:
+  - QWEN_API_KEY
+  base_url_env: QWEN_BASE_URL
+  default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  temperature: 0
+  max_tokens: 768
+  timeout_seconds: 120
+  extra_body: {}

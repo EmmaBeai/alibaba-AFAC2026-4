@@ -1,0 +1,8 @@
+route,model,role,note,question_count,valid_items,invalid_items,prompt_tokens,completion_tokens,total_tokens,avg_total_tokens
+tiny_0_6b,qwen3-0.6b,tiny_feasibility_probe,Smallest Qwen3 open-weight API route candidate; tests whether the prompt survives a very small model.,1,0,1,0,0,0,0.00
+small_1_7b,qwen3-1.7b,small_feasibility_probe,Small Qwen3 candidate; useful for checking the lower bound before quality collapses.,1,0,1,0,0,0,0.00
+compact_4b,qwen3-4b,compact_probe,Compact Qwen3 candidate; often the first route where structured JSON behavior may become usable.,1,0,1,0,0,0,0.00
+small_8b,qwen3-8b,small_quality_probe,Small Qwen3 quality probe; checks whether reading-chain quality is acceptable below plus/max routes.,1,1,0,471,364,835,835.00
+moe_a3b,qwen3-30b-a3b,small_active_moe_probe,MoE route with small active parameters; useful if available because it may trade quality for lower active compute.,1,1,0,471,340,811,811.00
+turbo,qwen-turbo,speed_cost_probe,Fast hosted route; practical low-cost baseline for compact question-stem reading.,1,1,0,471,336,807,807.00
+turbo_latest,qwen-turbo-latest,latest_turbo_probe,Latest turbo-family alias if exposed by the account; failed routes are recorded without stopping the run.,1,0,1,0,0,0,0.00

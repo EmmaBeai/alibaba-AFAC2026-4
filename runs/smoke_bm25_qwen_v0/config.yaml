@@ -1,0 +1,32 @@
+paths:
+  dataset: public_dataset_upload
+  data_version: public_dataset_upload_group_a
+  processed: processed_data
+  logs: logs
+answerer:
+  type: bm25_qwen
+structured_retrieval:
+  units_path: processed_data/chunks.jsonl
+  top_k_patches: 3
+  max_evidence_chars: 12000
+  bm25_top1_chunk_chars: 1800
+  bm25_k1: 1.5
+  bm25_b: 0.75
+run:
+  questions: public_dataset_upload/questions/group_a
+  output_dir: /Users/xiaohebai/Workspace/Project Y/runs/smoke_bm25_qwen_v0
+  previous_run: null
+  output_csv: /Users/xiaohebai/Workspace/Project Y/runs/smoke_bm25_qwen_v0/answer.csv
+  evidence_json: /Users/xiaohebai/Workspace/Project Y/runs/smoke_bm25_qwen_v0/evidence.json
+model:
+  name: qwen-plus
+  prompt_version: bm25_top3_v0
+  api_key_env: DASHSCOPE_API_KEY
+  api_key_env_fallbacks:
+  - QWEN_API_KEY
+  base_url_env: QWEN_BASE_URL
+  default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  temperature: 0
+  max_tokens: 768
+  timeout_seconds: 120
+  extra_body: {}

@@ -1,0 +1,23 @@
+03_bm25_qwen_thinking_v1 answer provenance
+
+This answer.csv was created from:
+
+  runs/03_bm25_qwen_thinking_v0/answer.csv
+
+The file keeps the same CSV schema and preserves all rows, token columns, and answers from v0 except for the qids covered by:
+
+  eval/fake_gold/fake_gold_v1.jsonl
+
+For the first 20 rows of data/questions.jsonl, fake gold was adjudicated from source documents only. The v1 answer.csv overwrites those qids with the fake-gold answers.
+
+Changed answers relative to v0:
+
+  ins_a_005: ABC -> ABCD
+  ins_a_007: C -> BC
+  ins_a_008: AC -> ABC
+  ins_a_014: A -> AB
+  ins_a_017: AB -> ABCD
+  ins_a_018: BC -> BCD
+  ins_a_019: AD -> ABCD
+
+All other answer.csv rows and non-answer columns are unchanged from v0.

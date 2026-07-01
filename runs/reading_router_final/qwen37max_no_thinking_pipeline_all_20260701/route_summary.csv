@@ -1,0 +1,5 @@
+route,question_count,valid_items,invalid_items,prompt_tokens,completion_tokens,total_tokens,avg_total_tokens
+tf_reading,20,20,0,1395,3297,4692,234.60
+multi_route_v2,65,65,0,9108,9312,18420,283.38
+mcq_route,15,15,0,2998,2896,5894,392.93
+general_reasoning,0,0,0,0,0,0,0.00

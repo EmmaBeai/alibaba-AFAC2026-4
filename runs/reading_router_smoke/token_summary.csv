@@ -1,0 +1,5 @@
+route,model,role,note,question_count,valid_items,invalid_items,prompt_tokens,completion_tokens,total_tokens,avg_total_tokens
+fast,qwen-turbo,speed_cost_probe,Fast and cheap candidate; tests whether the reading prompt is simple enough for a small route.,1,1,0,471,343,814,814.00
+balanced,qwen-plus,balanced_baseline,Middle route for quality/cost balance; useful as the practical baseline.,1,1,0,467,762,1229,1229.00
+strong,qwen-max,strong_quality_probe,Stronger general route; checks whether more capacity improves reading-chain quality.,1,0,1,467,344,811,811.00
+repo_default,qwen3.7-max,repo_default_anchor,"Current repository default, kept as the anchor against existing Project Y runs.",1,1,0,457,1960,2417,2417.00

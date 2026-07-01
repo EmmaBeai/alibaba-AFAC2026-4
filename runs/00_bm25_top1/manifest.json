@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-22T07:33:55.633188+00:00",
+  "run_id": "00_bm25_top1",
+  "git": {
+    "commit": "bdcf6214e4beb8b69611f27000cd9536efc2d025",
+    "short_commit": "bdcf621",
+    "dirty": true,
+    "status_short": [
+      "M .env.example",
+      " M README.md",
+      " M Val_README.md",
+      " D agent/bm25_experiment.py",
+      " D agent/llm.py",
+      " D agent/page_index.py",
+      " D agent/preprocess.py",
+      " D agent/prompts.py",
+      " D agent/retrieval.py",
+      " M agent/runner.py",
+      " D agent/structured.py",
+      " D agent/workflow.py",
+      " M config/default.yaml",
+      " D preprocess/__init__.py",
+      " D preprocess/pdf_parser.py",
+      " D processed_data/.gitkeep",
+      " M requirements.txt",
+      " D script/build_index.py",
+      " D script/format_structured.py",
+      " D script/inspect_text_quality.py",
+      " D script/pdf_parse_three.py",
+      " D script/preview_bm25_debug.py",
+      " D script/preview_structured_retrieval.py",
+      " M script/run_all.py",
+      " M script/run_pipeline.py",
+      " D tests/test_bm25_experiment.py",
+      " D tests/test_preprocess_pdf_source.py",
+      " D tests/test_structured.py",
+      " D tests/test_workflow.py",
+      "?? agent/bm25_top1.py",
+      "?? agent/run_artifacts.py",
+      "?? agent/run_compare.py",
+      "?? agent/submission_validator.py",
+      "?? chunk/",
+      "?? data/",
+      "?? docs/",
+      "?? examples/",
+      "?? outputs/",
+      "?? processed_data_1/",
+      "?? public_dataset_upload/",
+      "?? runs/",
+      "?? script/compare_runs.py",
+      "?? script/validate_submission.py",
+      "?? tests/test_answerer_registry.py",
+      "?? tests/test_bm25_top1.py",
+      "?? tests/test_chunk_documents.py",
+      "?? tests/test_config_defaults.py",
+      "?? tests/test_run_artifacts.py",
+      "?? tests/test_run_compare.py",
+      "?? tests/test_submission_validator.py",
+      "?? \"\\346\\257\\224\\350\\265\\233\\350\\257\\246\\346\\203\\205.pdf\""
+    ]
+  },
+  "data": {
+    "dataset_path": "/Users/xiaohebai/Workspace/Project Y/public_dataset_upload",
+    "questions_path": "/Users/xiaohebai/Workspace/Project Y/public_dataset_upload/questions/group_a",
+    "data_version": "public_dataset_upload_group_a",
+    "question_count": 100,
+    "document_count": 68
+  },
+  "answerer": {
+    "type": "bm25_top1"
+  },
+  "chunk_index_config": {
+    "units_path": "processed_data/chunks.jsonl",
+    "bm25_top1_chunk_chars": 1800,
+    "bm25_k1": 1.5,
+    "bm25_b": 0.75
+  },
+  "model": {
+    "name": "none",
+    "prompt_version": "none"
+  },
+  "token_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "outputs": {
+    "answer_csv": "/Users/xiaohebai/Workspace/Project Y/runs/00_bm25_top1/answer.csv",
+    "evidence_json": "/Users/xiaohebai/Workspace/Project Y/runs/00_bm25_top1/evidence.json",
+    "config_yaml": "/Users/xiaohebai/Workspace/Project Y/runs/00_bm25_top1/config.yaml",
+    "manifest_json": "/Users/xiaohebai/Workspace/Project Y/runs/00_bm25_top1/manifest.json"
+  },
+  "changes": {
+    "previous_run": null,
+    "changed_qids": [],
+    "same_qids": [],
+    "missing_left": [],
+    "missing_right": []
+  },
+  "output_checks": {
+    "ok": true,
+    "answer": {
+      "rows": 100,
+      "expected_rows": 100,
+      "missing_qids": [],
+      "extra_qids": [],
+      "duplicate_qids": [],
+      "invalid_answers": [],
+      "missing_columns": []
+    },
+    "page": {
+      "with_page": 0
+    },
+    "block_cell": {
+      "with_block_or_cell": 100
+    },
+    "citation": {
+      "with_citation": 100,
+      "missing_evidence_qids": []
+    },
+    "token": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "row_prompt_tokens": 0,
+      "row_completion_tokens": 0,
+      "row_total_tokens": 0
+    }
+  }
+}

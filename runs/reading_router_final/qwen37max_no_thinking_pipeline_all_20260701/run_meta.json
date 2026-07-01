@@ -1,0 +1,15 @@
+{
+  "input": "data/questions.jsonl",
+  "model": "qwen3.7-max",
+  "batch_size": 10,
+  "question_count": 100,
+  "qwen_extra_body": {
+    "enable_thinking": false
+  },
+  "route_counts": {
+    "tf_reading": 20,
+    "multi_route_v2": 65,
+    "mcq_route": 15,
+    "general_reasoning": 0
+  }
+}

@@ -1,0 +1,10 @@
+route,model,role,note,question_count,valid_items,invalid_items,prompt_tokens,completion_tokens,total_tokens,avg_total_tokens
+tiny_0_6b,qwen3-0.6b,tiny_feasibility_probe,Smallest Qwen3 open-weight API route candidate; tests whether the prompt survives a very small model.,100,0,100,0,0,0,0.00
+small_1_7b,qwen3-1.7b,small_feasibility_probe,Small Qwen3 candidate; useful for checking the lower bound before quality collapses.,100,0,100,0,0,0,0.00
+compact_4b,qwen3-4b,compact_probe,Compact Qwen3 candidate; often the first route where structured JSON behavior may become usable.,100,0,100,0,0,0,0.00
+small_8b,qwen3-8b,small_quality_probe,Small Qwen3 quality probe; checks whether reading-chain quality is acceptable below plus/max routes.,100,100,0,15396,27574,42970,429.70
+moe_a3b,qwen3-30b-a3b,small_active_moe_probe,MoE route with small active parameters; useful if available because it may trade quality for lower active compute.,100,100,0,15396,30596,45992,459.92
+turbo,qwen-turbo,speed_cost_probe,Fast hosted route; practical low-cost baseline for compact question-stem reading.,100,100,0,15396,30836,46232,462.32
+turbo_latest,qwen-turbo-latest,latest_turbo_probe,Latest turbo-family alias if exposed by the account; failed routes are recorded without stopping the run.,100,0,100,0,0,0,0.00
+plus,qwen-plus,balanced_baseline,Practical hosted baseline; compare small routes against this before paying for stronger models.,100,100,0,15356,65038,80394,803.94
+repo_default,qwen3.7-max,repo_default_anchor,"Current repository default, kept as the anchor against existing Project Y runs.",100,100,0,16010,81532,97542,975.42

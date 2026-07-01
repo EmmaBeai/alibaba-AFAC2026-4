@@ -1,0 +1,33 @@
+{
+  "input": "data/questions.jsonl",
+  "model": "qwen3.7-max",
+  "batch_size": 10,
+  "question_count": 100,
+  "number_sensitive_qids": [
+    "fc_a_013",
+    "ins_a_001",
+    "ins_a_002",
+    "ins_a_003",
+    "ins_a_006",
+    "ins_a_011",
+    "ins_a_015",
+    "ins_a_020",
+    "reg_a_006",
+    "reg_a_010",
+    "res_a_003",
+    "res_a_006",
+    "res_a_010",
+    "res_a_013",
+    "res_a_018"
+  ],
+  "qwen_extra_body": {
+    "enable_thinking": false
+  },
+  "route_counts": {
+    "numeric_delta": 15,
+    "tf_reading": 12,
+    "multi_route_v2": 63,
+    "mcq_route": 10,
+    "general_reasoning": 0
+  }
+}
